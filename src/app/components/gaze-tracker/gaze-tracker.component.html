@@ -1,0 +1,50 @@
+<div class="camera-container">
+  <video #video autoplay muted playsinline style="display:none;"></video>
+  <canvas #canvas width="640" height="480"></canvas>
+</div>
+
+<!-- Calibration Section -->
+<div class="calibration-section">
+  <h3>{{ isCalibrating ? 'Calibration In Progress' : 'Calibration Ready' }}</h3>
+  <canvas #targetCanvas width="640" height="480" style="border:1px solid black;"></canvas>
+  <div class="buttons">
+    <button *ngIf="!isCalibrating" (click)="startAutoCalibration()">Start Calibration</button>
+    <button *ngIf="isCalibrating" (click)="stopCalibration()">Stop Calibration</button>
+    <button (click)="exportData()">Export Data</button>
+  </div>
+</div>
+
+<!-- Camera Control Section -->
+<div class="controls">
+  <div class="control-buttons">
+    <button (click)="startCamera()">Start Camera</button>
+    <button (click)="stopCamera()">Stop Camera</button>
+  </div>
+  <div class="calibration-controls">
+    <button (click)="captureCalibrationPoint()">Capture Calibration Point</button>
+    <button (click)="clearCalibrationData()">Clear Calibration Data</button>
+  </div>
+</div>
+
+<div style="margin-bottom: 1rem;">
+  <label for="source">Select Camera Source:</label>
+  <select id="source" [(ngModel)]="selectedSource">
+    <option [value]="CameraSource.LOCAL">Local Camera</option>
+    <option [value]="CameraSource.REMOTE">ESP32-CAM (Remote)</option>
+  </select>
+</div>
+
+<div *ngIf="selectedSource === CameraSource.REMOTE" style="margin-bottom: 1rem;">
+  <label for="remoteUrl">Remote URL:</label>
+  <input id="remoteUrl" type="text" [(ngModel)]="remoteUrl" placeholder="http://192.168.xx.xx/">
+</div>
+
+<button (click)="startCamera()">Start Camera</button>
+<button (click)="stopCamera()">Stop Camera</button>
+
+<!-- วิดีโอกับแคนวาส -->
+<video #video autoplay style="display:none;"></video>
+<canvas #canvas></canvas>
+<canvas #targetCanvas style="display:none;"></canvas>
+
+
