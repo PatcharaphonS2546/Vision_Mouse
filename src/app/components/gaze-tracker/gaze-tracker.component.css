@@ -1,62 +1,73 @@
-/* Camera container */
-.camera-container {
+.controls {
+  margin-bottom: 10px;
   display: flex;
-  justify-content: center;
-  margin-bottom: 20px;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.video-container {
+  position: relative;
+  width: 640px;
+  /* หรือขนาดที่ต้องการ */
+  height: 480px;
+  border: 1px solid black;
+  background-color: #eee;
+  /* พื้นหลังเผื่อตอนยังไม่โหลด */
 }
 
 video,
-canvas {
-  border: 1px solid #ccc;
+canvas,
+img {
+  display: block;
+  /* ป้องกันช่องว่างใต้ element */
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* หรือ contain */
 }
 
-/* Calibration section */
-.calibration-section {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-bottom: 20px;
+.debug-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  /* ทำให้คลิกทะลุได้ */
 }
 
-.calibration-section h3 {
-  margin: 10px 0;
-  font-size: 18px;
-  color: #333;
+.gaze-cursor {
+  position: fixed;
+  /* หรือ absolute ถ้าต้องการให้อยู่ใน container */
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background-color: rgba(255, 0, 0, 0.5);
+  border: 2px solid red;
+  pointer-events: none;
+  /* ไม่ให้บังการคลิก */
+  z-index: 9999;
+  transition: left 0.05s linear, top 0.05s linear;
+  /* ทำให้เคลื่อนไหวสมูทเล็กน้อย */
 }
 
-.calibration-section .buttons {
-  display: flex;
-  gap: 10px;
-  margin-top: 10px;
+.status {
+  margin-left: 15px;
+  font-style: italic;
+  color: #555;
 }
 
-/* Controls layout */
-.controls {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+/* ซ่อน element ที่ไม่ใช้งาน */
+[hidden] {
+  display: none !important;
 }
 
-.control-buttons,
-.calibration-controls {
-  margin-bottom: 10px;
-}
-
-button {
-  padding: 10px;
-  font-size: 16px;
-  cursor: pointer;
-  border: none;
-  background-color: #007BFF;
-  color: white;
-  border-radius: 5px;
-  transition: background-color 0.3s;
-}
-
-button:hover {
-  background-color: #0056b3;
-}
-
-canvas {
-  margin-bottom: 10px;
+/* สไตล์สำหรับ Calibration Component (ถ้ามี) */
+app-calibration {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1000;
+  /* อยู่เหนือ Video/Canvas */
 }

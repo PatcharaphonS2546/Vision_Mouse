@@ -1,1 +1,15 @@
+<div class="calibration-overlay">
+  <!-- จุด Calibration -->
+  <div *ngIf="showPoint" class="calibration-point" [style.left]="currentPointPosition.left"
+    [style.top]="currentPointPosition.top">
+  </div>
+
+  <!-- ข้อความแนะนำ -->
+  <div class="calibration-instructions">
+    {{ instruction }} <span *ngIf="currentPointIndex >= 0 && currentPointIndex < calibrationPositions.length">(ESC to
+      Cancel)</span>
+  </div>
+</div>
+
 <p>calibration works!</p>
+

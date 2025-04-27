@@ -1,0 +1,71 @@
+.video-source-container {
+  padding: 20px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  margin-bottom: 20px;
+}
+
+.controls {
+  margin-bottom: 15px;
+  display: flex;
+  flex-wrap: wrap;
+  /* ให้ขึ้นบรรทัดใหม่ได้ */
+  gap: 15px;
+  /* ระยะห่างระหว่าง elements */
+  align-items: center;
+}
+
+.controls label {
+  margin-right: 5px;
+}
+
+.esp32-url-input {
+  display: flex;
+  /* จัด label กับ input ให้อยู่บรรทัดเดียวกัน */
+  align-items: center;
+  gap: 5px;
+}
+
+.esp32-url-input input {
+  padding: 5px;
+  min-width: 250px;
+  /* กำหนดความกว้างขั้นต่ำ */
+}
+
+
+.status {
+  font-style: italic;
+  color: #555;
+  margin-bottom: 15px;
+  min-height: 1.2em;
+  /* จองพื้นที่ไว้หน่อย กัน layout กระโดด */
+}
+
+.video-display {
+  position: relative;
+  /* สำหรับ overlay ทีหลัง */
+  width: 640px;
+  /* หรือขนาดที่ต้องการ */
+  height: 480px;
+  border: 1px solid black;
+  background-color: #f0f0f0;
+  /* พื้นหลังเทาๆ */
+  overflow: hidden;
+  /* ป้องกัน element ล้นกรอบ */
+}
+
+/* ซ่อน element ที่ถูกซ่อนด้วย [hidden] */
+[hidden] {
+  display: none !important;
+}
+
+video,
+img {
+  display: block;
+  /* เอาช่องว่างข้างใต้ออก */
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* ให้ภาพเต็มกรอบ อาจโดน crop */
+  /* หรือ object-fit: contain; ให้เห็นภาพทั้งหมด อาจมีขอบดำ */
+}

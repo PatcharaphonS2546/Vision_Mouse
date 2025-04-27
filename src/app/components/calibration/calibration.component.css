@@ -1,0 +1,40 @@
+.calibration-overlay {
+  position: absolute;
+  /* หรือ fixed ถ้าต้องการเต็มจอ */
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.3);
+  /* พื้นหลังโปร่งแสง */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  /* อยู่เหนือ video */
+}
+
+.calibration-point {
+  position: fixed;
+  /* ใช้ fixed เพื่ออ้างอิงกับ viewport โดยตรง */
+  width: 25px;
+  height: 25px;
+  background-color: yellow;
+  border: 2px solid orange;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  /* จัดกึ่งกลางจุด */
+  box-shadow: 0 0 15px 5px rgba(255, 255, 0, 0.7);
+}
+
+.calibration-instructions {
+  position: absolute;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 10px 20px;
+  border-radius: 5px;
+  font-size: 1.2em;
+}

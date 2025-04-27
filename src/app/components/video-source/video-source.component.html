@@ -1,0 +1,38 @@
+<div class="video-source-container">
+  <h2>Video Source Selector</h2>
+
+  <!-- Controls -->
+  <div class="controls">
+    <label for="sourceSelect">Select Source:</label>
+    <select id="sourceSelect" [(ngModel)]="selectedSource" (change)="onSourceChange()">
+      <option value="local">Local Camera</option>
+      <option value="esp32">ESP32-CAM (MJPEG URL)</option>
+    </select>
+
+    <!-- Input for ESP32 URL (Show only when ESP32 is selected) -->
+    <div *ngIf="selectedSource === 'esp32'" class="esp32-url-input">
+      <label for="esp32UrlInput">ESP32 Stream URL:</label>
+      <input id="esp32UrlInput" type="text" [(ngModel)]="esp32Url" placeholder="http://<ip_address>/stream">
+    </div>
+
+    <button (click)="startStream()" [disabled]="isStreaming">Start Stream</button>
+    <button (click)="stopStream()" [disabled]="!isStreaming">Stop Stream</button>
+  </div>
+
+  <!-- Status Message -->
+  <p class="status">Status: {{ statusMessage }}</p>
+
+  <!-- Video Display Area -->
+  <div class="video-display">
+    <!-- Local Camera Video -->
+    <video #localVideo [hidden]="selectedSource !== 'local'" autoplay playsinline width="640" height="480" muted>
+      <!-- ควรใส่ muted เพื่อให้ autoplay ทำงานได้ในบาง browser -->
+      Your browser does not support the video tag.
+    </video>
+
+    <!-- ESP32 MJPEG Stream Image -->
+    <img #esp32Image [hidden]="selectedSource !== 'esp32'" [src]="mjpegStreamUrl" alt="ESP32 Stream" width="640"
+      height="480" (load)="onEsp32LoadSuccess()" (error)="onEsp32LoadError()"> <!-- ใช้ <img> สำหรับ MJPEG stream -->
+  </div>
+
+</div>

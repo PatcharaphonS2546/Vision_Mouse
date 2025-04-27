@@ -1,50 +1,54 @@
-<div class="camera-container">
-  <video #video autoplay muted playsinline style="display:none;"></video>
-  <canvas #canvas width="640" height="480"></canvas>
-</div>
-
-<!-- Calibration Section -->
-<div class="calibration-section">
-  <h3>{{ isCalibrating ? 'Calibration In Progress' : 'Calibration Ready' }}</h3>
-  <canvas #targetCanvas width="640" height="480" style="border:1px solid black;"></canvas>
-  <div class="buttons">
-    <button *ngIf="!isCalibrating" (click)="startAutoCalibration()">Start Calibration</button>
-    <button *ngIf="isCalibrating" (click)="stopCalibration()">Stop Calibration</button>
-    <button (click)="exportData()">Export Data</button>
-  </div>
-</div>
-
-<!-- Camera Control Section -->
+<!-- Controls -->
 <div class="controls">
-  <div class="control-buttons">
-    <button (click)="startCamera()">Start Camera</button>
-    <button (click)="stopCamera()">Stop Camera</button>
-  </div>
-  <div class="calibration-controls">
-    <button (click)="captureCalibrationPoint()">Capture Calibration Point</button>
-    <button (click)="clearCalibrationData()">Clear Calibration Data</button>
-  </div>
-</div>
-
-<div style="margin-bottom: 1rem;">
-  <label for="source">Select Camera Source:</label>
-  <select id="source" [(ngModel)]="selectedSource">
-    <option [value]="CameraSource.LOCAL">Local Camera</option>
-    <option [value]="CameraSource.REMOTE">ESP32-CAM (Remote)</option>
+  <label for="sourceSelect">Video Source:</label>
+  <select id="sourceSelect" [(ngModel)]="selectedSource" (change)="changeSource()">
+    <option value="local">Local Camera</option>
+    <!-- <option value="esp32-websocket">ESP32 (WebSocket)</option> -->
+    <option value="esp32-mjpeg">ESP32 (MJPEG)</option> <!-- เพิ่ม Option นี้ -->
   </select>
+
+  <!-- Input for ESP32 URL (Show for both WebSocket and MJPEG) -->
+  <!-- *** สำคัญ: ผู้ใช้ต้องใส่ URL ที่ถูกต้องสำหรับ Source ที่เลือก *** -->
+  <!-- เช่น ws://... สำหรับ WebSocket, http://.../stream สำหรับ MJPEG -->
+  <div *ngIf="selectedSource.startsWith('esp32')" class="esp32-url-input">
+    <label for="esp32UrlInput">ESP32 URL:</label>
+    <input id="esp32UrlInput" type="text" [(ngModel)]="esp32Url" placeholder="ws://<IP>:81 or http://<IP>/stream">
+  </div>
+
+  <button (click)="startTracking()" [disabled]="isTracking || !mediaPipeService.isInitialized">Start Tracking</button>
+  <button (click)="stopTracking()" [disabled]="!isTracking">Stop Tracking</button>
+  <button (click)="startCalibration()" [disabled]="!isTracking || isCalibrating || !mediaPipeService.isInitialized">
+    Start Calibration
+  </button>
+  <button (click)="clearCalibrationAndResetModel()"
+    [disabled]="!calibrationService.isCalibrated()">
+    Clear Calibration
+  </button>
 </div>
 
-<div *ngIf="selectedSource === CameraSource.REMOTE" style="margin-bottom: 1rem;">
-  <label for="remoteUrl">Remote URL:</label>
-  <input id="remoteUrl" type="text" [(ngModel)]="remoteUrl" placeholder="http://192.168.xx.xx/">
+<!-- ... (Status Message เดิม) ... -->
+
+<!-- Video Display Area -->
+<div class="video-display">
+  <!-- Local Camera Video -->
+  <video #videoElement [hidden]="selectedSource !== 'local'" autoplay playsinline width="640" height="480" muted>
+  </video>
+
+  <!-- ESP32 WebSocket Stream Canvas -->
+  <canvas #esp32Canvas [hidden]="selectedSource !== 'esp32-websocket'" width="640" height="480">
+  </canvas>
+
+  <!-- ESP32 MJPEG Stream Image -->
+  <!-- *** เพิ่ม #mjpegImageElement, (load), (error) และผูก [src] *** -->
+  <img #mjpegImageElement [hidden]="selectedSource !== 'esp32-mjpeg'" [src]="mjpegStreamUrl" alt="ESP32 MJPEG Stream"
+    width="640" height="480" (load)="onMjpegLoadSuccess()" (error)="onMjpegLoadError($event)">
+
+  <!-- Debug Canvas (ซ้อนทับอยู่บนสุด) -->
+  <canvas #debugCanvas class="debug-overlay" width="640" height="480"></canvas>
+
+  <!-- Calibration UI (ซ้อนทับ) -->
+  <app-calibration *ngIf="isCalibrating" (calibrationPointTarget)="onCalibrationPointTarget($event)"
+    (calibrationFinished)="handleCalibrationFinished($event)">
+  </app-calibration>
+
 </div>
-
-<button (click)="startCamera()">Start Camera</button>
-<button (click)="stopCamera()">Stop Camera</button>
-
-<!-- วิดีโอกับแคนวาส -->
-<video #video autoplay style="display:none;"></video>
-<canvas #canvas></canvas>
-<canvas #targetCanvas style="display:none;"></canvas>
-
-
