@@ -1,107 +1,136 @@
 import { Injectable } from '@angular/core';
-import { CalibrationDataPoint } from './calibration.service';
+import * as regression from 'regression'; // Import library for Linear Regression
+import { MIN_CALIBRATION_POINTS_FOR_TRAINING } from './calibration.service';
 
 export interface PointOfGaze {
   x: number;
   y: number;
 }
 
+// Interface for storing the trained regression model results
+interface GazeModel {
+  // Note: regression.Result includes 'predict' method, coefficients ('equation'), r2, etc.
+  modelX: regression.Result | null; // Stores the result from regression.js for the X-axis
+  modelY: regression.Result | null; // Stores the result from regression.js for the Y-axis
+}
+
+// Define constants for configuration
+export const MIN_CALIBRATION_POINTS = 5; // Minimum calibration points required for training
+const SMOOTHING_WINDOW = 4;       // Number of frames for smoothing  (higher value -> smoother but slower response)
+const REGRESSION_PRECISION = 5;   // Number of decimal places for regression results
+
 @Injectable({
   providedIn: 'root'
 })
 export class GazeEstimationService {
-  // TODO: เก็บ Model ที่ได้จากการ Train (เช่น coefficients)
-  private gazeModel: any = null; // เปลี่ยน any เป็น type ที่เหมาะสม
 
-  // ตัวอย่างสำหรับ Smoothing (Moving Average)
+  private gazeModel: GazeModel = { modelX: null, modelY: null };
+  private isTrained: boolean = false;
   private gazeHistory: PointOfGaze[] = [];
-  private readonly SMOOTHING_WINDOW = 5; // จำนวน frame ที่จะใช้ในการเฉลี่ย
 
   constructor() { }
 
-  // --- ส่วนของการ Train Model (จากข้อมูล Calibration) ---
-  trainModel(calibrationData: CalibrationDataPoint[]): void {
-    console.log('Training gaze estimation model with data:', calibrationData);
-    if (calibrationData.length < 3) { // ต้องการข้อมูลอย่างน้อย 3 จุดสำหรับ Regression บางประเภท
-        console.warn("Not enough calibration data to train model.");
-        this.gazeModel = null; // หรือใช้ default/geometric model
-        return;
+  // Fixed issues with data preparation, error handling, and smoothing logic.
+  trainModel(features: number[][], targetsX: number[], targetsY: number[]): void {
+    console.log('Attempting to train gaze model with', features.length, 'feature sets.');
+    this.resetModel();
+
+    // Validate input data
+    if (features.length < MIN_CALIBRATION_POINTS || features.length !== targetsX.length || features.length !== targetsY.length) {
+      console.warn(`Insufficient or mismatched data for training. Features: ${features.length}, TargetsX: ${targetsX.length}, TargetsY: ${targetsY.length}. Need at least ${MIN_CALIBRATION_POINTS}.`);
+      return;
     }
 
-    // TODO: Implement Model Training Logic
-    // 1. เลือกว่าจะใช้ Landmarks หรือ Head Pose อะไรบ้างเป็น Input (Features)
-    // 2. เตรียมข้อมูลในรูปแบบที่ Library ต้องการ (เช่น array of [feature1, feature2, ..., screenX])
-    // 3. เรียกใช้ Library Regression (เช่น regression.linear(data))
-    // 4. เก็บผลลัพธ์ (coefficients) ไว้ใน this.gazeModel
+    // Prepare data for regression
+    const dataForX: [number, number][] = features.map((f, index) => [f[0], targetsX[index]]);
+    const dataForY: [number, number][] = features.map((f, index) => [f[0], targetsY[index]]);
 
-    // --- ตัวอย่าง Placeholder ---
-    // const dataForX = calibrationData.map(p => [p.landmarks.irisLeft.x, p.landmarks.irisRight.x, ..., p.screenX]);
-    // const dataForY = calibrationData.map(p => [p.landmarks.irisLeft.y, p.landmarks.irisRight.y, ..., p.screenY]);
-    // try {
-    //    const resultX = regression.linear(dataForX);
-    //    const resultY = regression.linear(dataForY);
-    //    this.gazeModel = { modelX: resultX, modelY: resultY };
-    //    console.log("Gaze model trained:", this.gazeModel);
-    // } catch (error) {
-    //    console.error("Error training regression model:", error);
-    //    this.gazeModel = null;
-    // }
-    // --------------------------
+    try {
+      console.log(`Training with ${dataForX.length} valid data points using Polynomial Regression (Order 2).`);
 
-    this.gazeModel = { trained: true }; // Placeholder ว่า Train แล้ว
-    console.log('Gaze model training complete (placeholder).');
+      // Train models using Polynomial Regression
+      this.gazeModel.modelX = regression.polynomial(dataForX, { order: 2, precision: REGRESSION_PRECISION });
+      this.gazeModel.modelY = regression.polynomial(dataForY, { order: 2, precision: REGRESSION_PRECISION });
+
+      console.log('Model X Equation:', this.gazeModel.modelX.string);
+      console.log('Model Y Equation:', this.gazeModel.modelY.string);
+      console.log('Model X R2:', this.gazeModel.modelX.r2);
+      console.log('Model Y R2:', this.gazeModel.modelY.r2);
+
+      this.isTrained = !!(this.gazeModel.modelX && this.gazeModel.modelY);
+
+      if (this.isTrained) {
+        console.log('Gaze estimation model trained successfully.');
+      } else {
+        console.error('Polynomial regression failed to produce models.');
+        this.resetModel();
+      }
+
+    } catch (error) {
+      console.error('Error training polynomial regression model:', error);
+      this.resetModel();
+    }
   }
 
-  // --- ส่วนของการทำนาย Gaze (จาก Landmark ปัจจุบัน) ---
-  predictGaze(landmarks: any, headPose: any): PointOfGaze | null {
-    if (!this.gazeModel) {
-      // console.warn('Gaze model not trained yet.');
-      return null; // หรือคืนค่า Default / ใช้ Geometric Method แทน
+  predictGaze(currentFeatures: number[]): PointOfGaze | null {
+    if (!this.isTrained || !this.gazeModel.modelX || !this.gazeModel.modelY) {
+      console.warn('Prediction skipped: Model is not trained.');
+      return null;
     }
 
-    // TODO: Implement Prediction Logic
-    // 1. ดึง Features ที่ต้องการจาก landmarks และ headPose
-    // 2. ใช้ Model ที่ Train ไว้ (this.gazeModel) ในการทำนาย X และ Y
-    // 3. คืนค่า { x: predictedX, y: predictedY }
+    if (!Array.isArray(currentFeatures) || currentFeatures.length === 0) {
+      console.warn('Prediction skipped: Invalid current features array.');
+      return null;
+    }
 
-    // --- ตัวอย่าง Placeholder ---
-    // const features = [landmarks.irisLeft.x, landmarks.irisRight.x, ...];
-    // const predictedX = this.gazeModel.modelX.predict(features)[1];
-    // const predictedY = this.gazeModel.modelY.predict(features)[1];
-    // let rawGaze = { x: predictedX, y: predictedY };
-    // --------------------------
-    // Placeholder - สุ่มค่าเพื่อให้เห็นภาพ
-     let rawGaze = { x: Math.random() * window.innerWidth, y: Math.random() * window.innerHeight };
+    try {
+      const featureValue = currentFeatures[0]; // Use the first feature for prediction
+      const predictedX = this.gazeModel.modelX.predict(featureValue)[1];
+      const predictedY = this.gazeModel.modelY.predict(featureValue)[1];
 
+      if (isNaN(predictedX) || isNaN(predictedY)) {
+        console.warn('Prediction resulted in NaN. Features:', currentFeatures);
+        return null;
+      }
 
-    // Apply Smoothing
-    const smoothedGaze = this.applySmoothing(rawGaze);
-    return smoothedGaze;
+      const rawGaze: PointOfGaze = { x: predictedX, y: predictedY };
+      return this._applySmoothing(rawGaze);
+
+    } catch (error) {
+      console.error('Error predicting gaze:', error);
+      return null;
+    }
   }
 
-  // --- ส่วนของ Smoothing ---
-  private applySmoothing(newGaze: PointOfGaze): PointOfGaze {
+  resetModel(): void {
+    this.gazeModel = { modelX: null, modelY: null };
+    this.isTrained = false;
+    this.resetSmoothing(); // Also reset smoothing history when model is reset
+    console.log("Gaze estimation model reset.");
+  }
+
+  isModelTrained(): boolean {
+      return this.isTrained;
+  }
+
+  // --- Smoothing Logic ---
+  private _applySmoothing(newGaze: PointOfGaze): PointOfGaze {
       this.gazeHistory.push(newGaze);
-      if (this.gazeHistory.length > this.SMOOTHING_WINDOW) {
-          this.gazeHistory.shift(); // เอาค่าเก่าสุดออก
+      if (this.gazeHistory.length > SMOOTHING_WINDOW) {
+        this.gazeHistory.shift();
       }
-
       if (this.gazeHistory.length === 0) return newGaze;
-
-      let sumX = 0;
-      let sumY = 0;
+      let sumX = 0, sumY = 0;
       for (const gaze of this.gazeHistory) {
-          sumX += gaze.x;
-          sumY += gaze.y;
+        sumX += gaze.x;
+        sumY += gaze.y;
       }
-
-      return {
-          x: sumX / this.gazeHistory.length,
-          y: sumY / this.gazeHistory.length
-      };
+      return { x: sumX / this.gazeHistory.length, y: sumY / this.gazeHistory.length };
   }
 
-  resetSmoothing() {
-      this.gazeHistory = [];
+  resetSmoothing(): void {
+    this.gazeHistory = [];
   }
+
+  // --- Feature Extraction Logic ---
 }

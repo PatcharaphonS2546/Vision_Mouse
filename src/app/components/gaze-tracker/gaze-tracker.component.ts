@@ -2,10 +2,14 @@ import { Component, OnInit, OnDestroy, ViewChild, ElementRef, NgZone } from '@an
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MediapipeService } from '../../services/mediapipe.service';
-import { CalibrationService, CalibrationDataPoint, LandmarkData, HeadPoseData } from '../../services/calibration.service';
-import { GazeEstimationService, PointOfGaze } from '../../services/gaze-estimation.service';
+import { CalibrationService, MIN_CALIBRATION_POINTS_FOR_TRAINING } from '../../services/calibration.service';
+import { GazeEstimationService, PointOfGaze} from '../../services/gaze-estimation.service';
 import { FaceLandmarkerResult, NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { CalibrationComponent } from '../calibration/calibration.component';
+import { GazeProcessingService, FrameProcessingResult } from '../../services/gaze-processing.service';
+
+const LEFT_IRIS_INDICES = [473, 474, 475, 476, 477];
+const RIGHT_IRIS_INDICES = [468, 469, 470, 471, 472]
 
 @Component({
   selector: 'app-gaze-tracker',
@@ -13,7 +17,8 @@ import { CalibrationComponent } from '../calibration/calibration.component';
   imports: [
       CommonModule,    // เพิ่ม CommonModule
       FormsModule,     // เพิ่ม FormsModule
-      CalibrationComponent],
+      CalibrationComponent
+    ],
   templateUrl: './gaze-tracker.component.html',
   styleUrls: ['./gaze-tracker.component.css']
 })
@@ -45,110 +50,69 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
   // Gaze Data
   gazeX = 0;
   gazeY = 0;
-  private lastLandmarks: any = null; // TODO: กำหนด Type
-  private lastHeadPose: any = null; // TODO: กำหนด Type
 
-  private predictWebcam(): void {
-    // *** ตรวจสอบก่อนเริ่มทำงาน ***
+
+  private async predictWebcam(): Promise<void> {
     if (!this.isTracking) {
-        // ถ้าไม่ได้ Tracking อยู่ ให้ยกเลิก Frame ที่ค้างอยู่ (ถ้ามี) และหยุดทำงาน
-        if (this.animationFrameId) {
-            cancelAnimationFrame(this.animationFrameId);
-            this.animationFrameId = null;
-        }
+        // ... (หยุด loop เดิม) ...
         return;
     }
 
-    // *** ดึง Element ต้นทางปัจจุบัน ***
-    const videoSourceElement = this.getVideoSourceElement(); // <--- ประกาศและกำหนดค่าที่นี่
-
-    if (videoSourceElement && this.mediaPipeService.isInitialized) {
-      const now = performance.now();
-
-      // --- จัดการ MJPEG Input (วาดลง Hidden Canvas) ---
-      let inputElementForMediaPipe: HTMLVideoElement | HTMLCanvasElement = videoSourceElement as HTMLVideoElement | HTMLCanvasElement; // Assume Video or Canvas initially
-
-      if (this.selectedSource === 'esp32-mjpeg' && videoSourceElement instanceof HTMLImageElement) {
-          // ถ้าเป็น MJPEG และ Element คือ <img> ให้วาดลง Hidden Canvas ก่อน
-          if (!this.hiddenMjpegCanvas) { // สร้าง Hidden Canvas ถ้ายังไม่มี
-              this.hiddenMjpegCanvas = document.createElement('canvas');
-              this.mjpegCanvasCtx = this.hiddenMjpegCanvas.getContext('2d');
-          }
-          if (this.hiddenMjpegCanvas && this.mjpegCanvasCtx && videoSourceElement.naturalWidth > 0 && videoSourceElement.naturalHeight > 0) {
-              // ปรับขนาด Canvas ให้เท่ากับภาพ MJPEG
-              if (this.hiddenMjpegCanvas.width !== videoSourceElement.naturalWidth || this.hiddenMjpegCanvas.height !== videoSourceElement.naturalHeight) {
-                  this.hiddenMjpegCanvas.width = videoSourceElement.naturalWidth;
-                  this.hiddenMjpegCanvas.height = videoSourceElement.naturalHeight;
-                   // ปรับขนาด Debug Canvas ตามไปด้วย (อาจจะย้ายไปทำที่อื่นถ้าซ้ำซ้อน)
-                   // this.adjustCanvasSize(videoSourceElement.naturalWidth, videoSourceElement.naturalHeight);
-              }
-              // วาดภาพจาก <img> ลง Canvas
-              this.mjpegCanvasCtx.drawImage(videoSourceElement, 0, 0, this.hiddenMjpegCanvas.width, this.hiddenMjpegCanvas.height);
-              inputElementForMediaPipe = this.hiddenMjpegCanvas; // ใช้ Canvas นี้เป็น Input แทน <img>
-          } else {
-              // ถ้ายังโหลดภาพ MJPEG ไม่ได้ หรือ Canvas ไม่พร้อม ให้ข้าม Frame นี้
-              this.requestNextFrame(); // ขอ Frame ถัดไป
-              return;
-          }
-      } else if (this.selectedSource === 'esp32-websocket' && videoSourceElement instanceof HTMLCanvasElement) {
-          // ถ้าเป็น WebSocket และ Element คือ Canvas ก็ใช้ได้เลย
-          inputElementForMediaPipe = videoSourceElement;
-      } else if (this.selectedSource === 'local' && videoSourceElement instanceof HTMLVideoElement) {
-           // ถ้าเป็น Local Camera และ Element คือ Video ก็ใช้ได้เลย
-           inputElementForMediaPipe = videoSourceElement;
-      } else {
-          // กรณีอื่นๆ ที่ไม่คาดคิด หรือ Element ยังไม่พร้อม
-           console.warn("Unsupported or unready video source element type for MediaPipe:", videoSourceElement);
-           this.requestNextFrame(); // ขอ Frame ถัดไป
-           return;
-      }
-
-
-      // --- ดึง Landmark จาก MediaPipe ---
-      const results: FaceLandmarkerResult | undefined = this.mediaPipeService.detectLandmarks(inputElementForMediaPipe, now); // <--- ใช้ inputElementForMediaPipe
-
-      // *** เก็บผลลัพธ์ล่าสุดไว้เสมอ ***
-      // ใช้ structuredClone เพื่อ deep copy ที่ดีกว่า JSON.parse/stringify (ถ้า browser รองรับ)
-      // หรือเลือก copy เฉพาะส่วนที่ต้องการ
-       try {
-          this.lastLandmarksResult = results ? structuredClone(results) : null;
-       } catch (e) {
-          // Fallback to JSON method if structuredClone fails or is not available
-          this.lastLandmarksResult = results ? JSON.parse(JSON.stringify(results)) : null;
-       }
-
-
-      // --- วาด Debug (ถ้ามีผลลัพธ์) ---
-      const canvasCtx = this.debugCanvas.nativeElement.getContext('2d');
-      if (canvasCtx) {
-        // ปรับขนาด Debug Canvas ให้ตรงกับ Input ที่ใช้กับ MediaPipe
-        if (canvasCtx.canvas.width !== inputElementForMediaPipe.width || canvasCtx.canvas.height !== inputElementForMediaPipe.height) {
-             this.adjustCanvasSize(inputElementForMediaPipe.width, inputElementForMediaPipe.height);
-        }
-
-        canvasCtx.clearRect(0, 0, this.debugCanvas.nativeElement.width, this.debugCanvas.nativeElement.height);
-        if (results && results.faceLandmarks && results.faceLandmarks.length > 0) {
-            // ปรับการวาดให้ใช้ขนาดของ inputElementForMediaPipe เป็นตัวอ้างอิง
-            this.drawLandmarks(canvasCtx, results.faceLandmarks[0], inputElementForMediaPipe.width, inputElementForMediaPipe.height);
-        }
-      }
-
-      // --- Gaze Estimation (จะทำทีหลัง) ---
-      // if (!this.isCalibrating && this.calibrationService.isCalibrated()) {
-      //    this.estimateGaze();
-      // }
-
-    } else {
-        // ถ้า videoSourceElement หรือ MediaPipe ยังไม่พร้อม
-        // อาจจะเคลียร์ Debug Canvas หรือไม่ต้องทำอะไร
-        const canvasCtx = this.debugCanvas?.nativeElement?.getContext('2d');
-        canvasCtx?.clearRect(0, 0, canvasCtx.canvas.width, canvasCtx.canvas.height);
+    const videoSourceElement = this.getVideoSourceElement();
+    if (!videoSourceElement || !this.mediaPipeService.isInitialized) {
+         this.requestNextFrame();
+         return;
     }
 
-    // --- เรียก Frame ถัดไป ---
-    this.requestNextFrame();
+    try {
+        const inputElementForMediaPipe = this.prepareInputForMediaPipeSync(videoSourceElement);
 
-  } // --- สิ้นสุด predictWebcam ---
+        if (!inputElementForMediaPipe) {
+             this.requestNextFrame();
+             return;
+        }
+
+        const now = performance.now();
+
+        // ---- การเปลี่ยนแปลงเริ่มที่นี่ ----
+
+        // 1. (จำเป็นสำหรับ Service ปัจจุบัน) ต้องรัน MediaPipe ครั้งแรกเพื่อเอา Landmarks มาสกัด Feature
+        const initialMediaPipeResults = this.mediaPipeService.detectLandmarks(inputElementForMediaPipe, now);
+        this.storeLatestResults(initialMediaPipeResults); // เก็บผลลัพธ์นี้ไว้ใช้กับ Calibration
+
+        // 2. สกัด Feature จากผลลัพธ์ล่าสุด
+        const currentFeatures = this.extractFeaturesFromResults(this.lastLandmarksResult);
+
+        // 3. กำหนดเงื่อนไขการทำนาย Gaze
+        const isGazePredictionEnabled = !this.isCalibrating && this.calibrationService.isCalibratedAndTrained();
+
+        // 4. เรียก GazeProcessingService (ซึ่งจะรัน MediaPipe อีกครั้ง และทำนาย Gaze ถ้าเงื่อนไขครบ)
+        // *** ส่ง Argument ให้ครบ 4 ตัว ***
+        const processingResult: FrameProcessingResult = this.gazeProcessingService.processFrame(
+            inputElementForMediaPipe,
+            isGazePredictionEnabled,
+            currentFeatures, // <--- ส่ง Features ที่สกัดได้
+            now              // <--- ส่ง Timestamp
+        );
+
+        // 5. ใช้ผลลัพธ์จาก GazeProcessingService
+        //    (mediaPipeResults ที่ได้จาก processingResult อาจจะซ้ำกับ initialMediaPipeResults
+        //     แต่เพื่อความสอดคล้อง ใช้ผลจาก Service ไปเลย)
+        // this.storeLatestResults(processingResult.mediaPipeResults); // อาจจะไม่ต้อง store ซ้ำ ถ้าไม่ต่าง
+
+        this.drawDebugInfo(inputElementForMediaPipe, processingResult.mediaPipeResults); // วาด Debug จากผลของ Service
+
+        if (processingResult.predictedGaze) {
+            this.updateGazeCursor(processingResult.predictedGaze); // อัปเดต Cursor จากผลของ Service
+        }
+
+       // ---- การเปลี่ยนแปลงสิ้นสุดที่นี่ ----
+
+    } catch (error) {
+         console.error("Error during prediction loop:", error);
+    }
+    this.requestNextFrame();
+  }
 
   // Helper function to request the next frame
   private requestNextFrame(): void {
@@ -169,6 +133,7 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
     public mediaPipeService: MediapipeService, // public เพื่อให้ template เข้าถึง isInitialized ได้
     public calibrationService: CalibrationService,
     public gazeEstimationService : GazeEstimationService,
+    private gazeProcessingService: GazeProcessingService,
     private ngZone: NgZone // ใช้เพื่อให้ requestAnimationFrame ทำงานนอก Zone ของ Angular ได้ (ประสิทธิภาพดีขึ้น)
   ) { }
 
@@ -196,14 +161,14 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
   // --- Public method for template binding ---
   public clearCalibrationAndResetModel(): void {
       this.calibrationService.clearCalibration();
-      // this.gazeEstimationService.resetModel(); // uncomment when implemented
-      this.gazeEstimationService.resetSmoothing();
-      this.calibrationService.setCalibratedStatus(false);
+      this.gazeEstimationService.resetModel(); // <--- เรียก reset model
+      this.calibrationService.setCalibratedAndTrainedStatus(false); // ใช้เมธอดใหม่
       this.statusMessage = 'Calibration cleared.';
-       // Reset gaze position if desired
-       this.gazeX = window.innerWidth / 2;
-       this.gazeY = window.innerHeight / 2;
+      this.gazeX = window.innerWidth / 2;
+      this.gazeY = window.innerHeight / 2;
   }
+
+  //this here is
 
   private startMjpegStream(): void {
     // *** สำคัญ: ตรวจสอบว่า URL ที่ผู้ใช้ป้อนเหมาะสมสำหรับ MJPEG ***
@@ -397,33 +362,6 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
   //     this.mjpegStreamUrl = '';
   // }
 
-  // --- Main Processing Loop ---
-
-  private estimateGaze(): void {
-    if (this.lastLandmarksResult && this.lastLandmarksResult.faceLandmarks.length > 0) {
-      const currentLandmarks: NormalizedLandmark[] = this.lastLandmarksResult.faceLandmarks[0];
-      const currentMatrix = this.lastLandmarksResult.facialTransformationMatrixes?.[0];
-      const currentMatrixData: number[] | null = currentMatrix ? currentMatrix.data : null; // ไม่จำเป็นต้อง Copy ถ้าแค่ส่งไป predict
-
-      // *** ส่งข้อมูลปัจจุบันไปให้ GazeEstimationService ***
-      // const pog: PointOfGaze | null = this.gazeEstimationService.predictGaze(
-      //      { landmarks: currentLandmarks }, // สร้าง Object ตาม Interface LandmarkData (ถ้า Service ต้องการ)
-      //      { matrix: currentMatrixData }     // สร้าง Object ตาม Interface HeadPoseData (ถ้า Service ต้องการ)
-      // );
-
-      // Mockup สำหรับการทดสอบ Gaze Cursor:
-      const pog: PointOfGaze | null = { x: Math.random() * window.innerWidth, y: Math.random() * window.innerHeight }; // <--- *** Placeholder ***
-
-      if (pog) {
-        this.ngZone.run(() => {
-          this.gazeX = pog.x;
-          this.gazeY = pog.y;
-        });
-      }
-    }
-  }
-
-
   // --- Calibration Handling ---
 
   startCalibration(): void {
@@ -458,33 +396,19 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
    * @param targetPoint พิกัด X, Y ของจุดเป้าหมายบนหน้าจอ
    */
   handleCalibrationTarget(targetPoint: { x: number, y: number }): void {
-    if (!this.lastLandmarksResult || this.lastLandmarksResult.faceLandmarks.length === 0) {
-      console.warn("Skipping calibration point capture: No landmarks available.");
-      // อาจจะแจ้งผู้ใช้ใน CalibrationComponent ให้ลองใหม่? (ซับซ้อนขึ้น)
-      return;
-    }
+      // ใช้ Feature Extraction *ภายใน Component* จาก this.lastLandmarksResult
+      const features = this.extractFeaturesFromResults(this.lastLandmarksResult);
 
-      // ดึงข้อมูลโดยตรงจาก lastLandmarksResult และให้ TypeScript ช่วยตรวจสอบ Type
-    const currentLandmarks: NormalizedLandmark[] = this.lastLandmarksResult.faceLandmarks[0];
-    const currentMatrix = this.lastLandmarksResult.facialTransformationMatrixes?.[0]; // ใช้ Optional Chaining (?)
-    const currentMatrixData: number[] | null = currentMatrix ? [...currentMatrix.data] : null; // Copy array ถ้ามี
-
-    // สร้าง Object ข้อมูลที่จะเก็บ (Type ควรจะตรงกับ Interface)
-    const landmarkData: LandmarkData = {
-        landmarks: currentLandmarks // สามารถ Deep Copy ถ้าต้องการความปลอดภัยสูงสุด: structuredClone(currentLandmarks)
-    };
-    const headPoseData: HeadPoseData = {
-        matrix: currentMatrixData
-    };
-
-    const dataPoint: CalibrationDataPoint = {
-      screenX: targetPoint.x,
-      screenY: targetPoint.y,
-      landmarkData: landmarkData,
-      headPoseData: headPoseData
-    };
-
-    this.calibrationService.addCalibrationPoint(dataPoint);
+      if (features) {
+          const dataPoint = { // ไม่ต้องประกาศ Type CalibrationDataPoint ซ้ำก็ได้
+              screenX: targetPoint.x,
+              screenY: targetPoint.y,
+              features: features
+          };
+          this.calibrationService.addCalibrationPoint(dataPoint);
+      } else {
+          console.warn("Skipping calibration point capture: Could not extract features.");
+      }
   }
 
   /**
@@ -492,41 +416,221 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
    * @param success true ถ้าเสร็จสมบูรณ์, false ถ้ายกเลิก
    */
   handleCalibrationFinished(success: boolean): void {
-    this.isCalibrating = false; // ซ่อน Calibration UI
+      this.isCalibrating = false;
 
-    if (success) {
-        const pointsCollected = this.calibrationService.getPointsCollectedCount();
-        if (pointsCollected >= 5) { // กำหนดจำนวนจุดขั้นต่ำที่ยอมรับได้
-            this.statusMessage = `Calibration complete (${pointsCollected} points). Ready to train model.`;
-            // *** จุดที่จะเรียก Train Model ในอนาคต ***
-            // this.trainGazeModel();
-            this.calibrationService.setCalibratedStatus(true); // ตั้งสถานะว่าข้อมูลพร้อมใช้ Train
-        } else {
-             this.statusMessage = `Calibration finished, but not enough points collected (${pointsCollected}). Please calibrate again.`;
-             this.calibrationService.clearCalibration(); // ล้างข้อมูลที่ไม่พอ
-             this.calibrationService.setCalibratedStatus(false);
-        }
+      if (success) {
+           const calibrationData = this.calibrationService.getCalibrationData();
+          const pointsCollected = calibrationData.length;
 
-    } else {
-      this.statusMessage = 'Calibration cancelled.';
-      this.calibrationService.clearCalibration(); // ล้างข้อมูลถ้าผู้ใช้ยกเลิก
-       this.calibrationService.setCalibratedStatus(false);
-    }
+          if (pointsCollected >= MIN_CALIBRATION_POINTS_FOR_TRAINING) {
+              this.statusMessage = `Calibration complete (${pointsCollected} points). Preparing data for training...`;
+              const allFeatures: number[][] = [];
+              const allTargetsX: number[] = [];
+              const allTargetsY: number[] = [];
+              for (const point of calibrationData) {
+                  if (point.features && point.features.length > 0) {
+                      allFeatures.push(point.features);
+                      allTargetsX.push(point.screenX);
+                      allTargetsY.push(point.screenY);
+                  }
+              }
+
+              // ตรวจสอบว่ามีข้อมูลพอหลังจาก filter หรือไม่
+              if (allFeatures.length >= MIN_CALIBRATION_POINTS_FOR_TRAINING) {
+                  this.statusMessage = `Training model with ${allFeatures.length} valid points...`;
+                  // *** เรียก Train Model ด้วยข้อมูลที่เตรียมไว้ ***
+                  this.gazeEstimationService.trainModel(allFeatures, allTargetsX, allTargetsY); // เรียก Train
+                  // *******************************************
+
+                  if (this.gazeEstimationService.isModelTrained()) {
+                      this.calibrationService.setCalibratedAndTrainedStatus(true);
+                      this.statusMessage = 'Calibration and training complete. Gaze estimation active.';
+                      this.gazeEstimationService.resetSmoothing();
+                  } else {
+                      this.statusMessage = 'Calibration complete, but model training failed. Please try again.';
+                      // ไม่ควรเคลียร์ calibration data ที่นี่ ให้ผู้ใช้กด Clear เอง
+                      this.calibrationService.setCalibratedAndTrainedStatus(false);
+                  }
+              } else {
+                   this.statusMessage = `Calibration finished, but not enough valid points (${allFeatures.length}) after filtering. Please calibrate again.`;
+                   this.calibrationService.clearCalibration(); // ล้างถ้าข้อมูลไม่ถูกต้องเลย
+                   this.calibrationService.setCalibratedAndTrainedStatus(false);
+              }
+
+          } else {
+               this.statusMessage = `Calibration finished, but not enough points collected (${pointsCollected}). Please calibrate again.`;
+               this.calibrationService.clearCalibration();
+               this.calibrationService.setCalibratedAndTrainedStatus(false);
+          }
+
+      } else {
+          this.statusMessage = 'Calibration cancelled.';
+          this.calibrationService.clearCalibration();
+          this.calibrationService.setCalibratedAndTrainedStatus(false);
+          this.gazeEstimationService.resetModel();
+      }
   }
 
   // --- Helper Functions ---
+
+  private prepareInputForMediaPipeSync(sourceElement: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement): HTMLVideoElement | HTMLCanvasElement | null { /* ...โค้ดเดิม... */
+       if (this.selectedSource === 'esp32-mjpeg' && sourceElement instanceof HTMLImageElement) {
+           if (!this.hiddenMjpegCanvas) {
+                this.hiddenMjpegCanvas = document.createElement('canvas');
+                this.mjpegCanvasCtx = this.hiddenMjpegCanvas.getContext('2d');
+            }
+            if (this.hiddenMjpegCanvas && this.mjpegCanvasCtx && sourceElement.naturalWidth > 0) {
+                 if (this.hiddenMjpegCanvas.width !== sourceElement.naturalWidth || this.hiddenMjpegCanvas.height !== sourceElement.naturalHeight) {
+                    this.hiddenMjpegCanvas.width = sourceElement.naturalWidth;
+                    this.hiddenMjpegCanvas.height = sourceElement.naturalHeight;
+                 }
+                 this.mjpegCanvasCtx.drawImage(sourceElement, 0, 0, this.hiddenMjpegCanvas.width, this.hiddenMjpegCanvas.height);
+                 return this.hiddenMjpegCanvas;
+            } else {
+                return null; // MJPEG Image not ready
+            }
+       } else if ((this.selectedSource === 'local' && sourceElement instanceof HTMLVideoElement) || (this.selectedSource === 'esp32-websocket' && sourceElement instanceof HTMLCanvasElement)) {
+           // ตรวจสอบ readiness เพิ่มเติมสำหรับ Video
+           if (sourceElement instanceof HTMLVideoElement && sourceElement.readyState < 2) { // HAVE_CURRENT_DATA or more
+               return null;
+           }
+           return sourceElement; // Ready to use
+       }
+       return null; // Unsupported type or not ready
+   }
+
+  private predictAndApplyGaze(): void {
+        // ใช้ isCalibratedAndTrained() จาก Service
+        if (!this.isCalibrating && this.calibrationService.isCalibratedAndTrained() && this.lastLandmarksResult) {
+            // สกัด Feature ปัจจุบัน
+            const currentFeatures = this.extractFeaturesFromResults(this.lastLandmarksResult);
+
+            if (currentFeatures) {
+                // ทำนาย Gaze
+                const pog: PointOfGaze | null = this.gazeEstimationService.predictGaze(currentFeatures); // <--- ส่งเฉพาะ Features
+
+                if (pog) {
+                    this.ngZone.run(() => {
+                        this.gazeX = pog.x;
+                        this.gazeY = pog.y;
+                    });
+                }
+            }
+        }
+  }
+
+   private storeLatestResults(results: FaceLandmarkerResult | undefined | null): void { /* ...โค้ดเดิม... */
+      try {
+          this.lastLandmarksResult = results ? structuredClone(results) : null;
+      } catch (e) {
+          console.warn("structuredClone failed, falling back to JSON copy for MediaPipe results.");
+          this.lastLandmarksResult = results ? JSON.parse(JSON.stringify(results)) : null;
+      }
+  }
+
+  private drawDebugInfo(inputElement: HTMLVideoElement | HTMLCanvasElement, results: FaceLandmarkerResult | null): void {
+        const ctx = this.debugCanvas?.nativeElement?.getContext('2d');
+        if (!ctx) return;
+
+        // ปรับขนาดและเคลียร์ Canvas
+        if (ctx.canvas.width !== inputElement.width || ctx.canvas.height !== inputElement.height) {
+             this.adjustCanvasSize(inputElement.width, inputElement.height); // ปรับ Debug Canvas
+        }
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+        // วาด Landmarks และ Gaze Arrows ถ้ามีข้อมูล
+        if (results && results.faceLandmarks && results.faceLandmarks.length > 0) {
+            const landmarks = results.faceLandmarks[0];
+            this.drawLandmarks(ctx, landmarks, inputElement.width, inputElement.height); // วาดจุด Landmark
+            // อาจจะเรียก drawGazeDirection ที่นี่ ถ้าแยกออกมา
+        }
+   }
+
+  private updateGazeCursor(gazePoint: PointOfGaze): void {
+      this.ngZone.run(() => {
+          this.gazeX = gazePoint.x;
+          this.gazeY = gazePoint.y;
+      });
+  }
+
+  // --- Feature Extraction (ย้ายมาจาก Service) ---
+   private extractFeaturesFromResults(results: FaceLandmarkerResult | null): number[] | null {
+      if (!results || !results.faceLandmarks || results.faceLandmarks.length === 0) {
+          return null; // ไม่มีข้อมูล Landmark
+      }
+      const landmarks = results.faceLandmarks[0]; // ใช้เฉพาะหน้าแรก
+      if (landmarks.length < 478) return null; // ตรวจสอบจำนวน Landmark
+
+      // 1. คำนวณตำแหน่งศูนย์กลาง Iris (Normalized Coords)
+      const leftIrisCenter = this._calculateAveragePosition(landmarks, LEFT_IRIS_INDICES);
+      const rightIrisCenter = this._calculateAveragePosition(landmarks, RIGHT_IRIS_INDICES);
+
+      if (!leftIrisCenter || !rightIrisCenter) {
+          // console.warn("Feature extraction failed: Could not calculate iris centers.");
+          return null; // หา Iris ไม่เจอ
+      }
+
+      // 2. ดึงข้อมูล Head Pose (Translation)
+      let tx = 0, ty = 0, tz = 0; // ค่าเริ่มต้น (กรณีไม่มี Head Pose)
+      const headMatrix = results.facialTransformationMatrixes?.[0]?.data;
+      if (headMatrix && headMatrix.length === 16) {
+          tx = headMatrix[12];
+          ty = headMatrix[13];
+          tz = headMatrix[14];
+      } else {
+         // console.warn("Head pose data missing or invalid for feature extraction.");
+         // ไม่ต้องทำอะไร ใช้ค่าเริ่มต้น 0
+      }
+
+      // --- 3. สร้าง Feature Vector ---
+      // ตัวอย่าง: [leftIrisX, leftIrisY, rightIrisX, rightIrisY, headTx, headTy, headTz]
+      const features: number[] = [
+          leftIrisCenter.x,
+          leftIrisCenter.y,
+          rightIrisCenter.x,
+          rightIrisCenter.y,
+          tx,
+          ty,
+          tz
+          // *** สามารถเพิ่ม/ปรับปรุง Features ตรงนี้ได้ ***
+          // เช่น ระยะห่างระหว่าง Iris, ระยะห่าง Iris กับมุมตา, หรือค่า Rotation จาก Head Pose
+      ];
+
+      // ตรวจสอบ NaN (สำคัญ)
+      if (features.some(isNaN)) {
+          console.warn("NaN value detected in extracted features:", features);
+          return null;
+      }
+
+      return features;
+  }
+
+  private _calculateAveragePosition(landmarks: NormalizedLandmark[], indices: number[]): { x: number, y: number, z?: number } | null {
+      let sumX = 0, sumY = 0, sumZ = 0, count = 0;
+      let hasZ = false;
+      for (const index of indices) {
+          const lm = landmarks?.[index];
+          if (lm && typeof lm.x === 'number' && typeof lm.y === 'number') {
+              sumX += lm.x; sumY += lm.y;
+              if (typeof lm.z === 'number') { sumZ += lm.z; hasZ = true; }
+              count++;
+          }
+      }
+      if (count === 0) return null;
+      const avgPos: { x: number, y: number, z?: number } = { x: sumX / count, y: sumY / count };
+      if (hasZ) { avgPos.z = sumZ / count; }
+      return avgPos;
+  }
 
   getVideoSourceElement(): HTMLVideoElement | HTMLCanvasElement | HTMLImageElement | null {
      if (this.selectedSource === 'local' && this.videoElement) {
          return this.videoElement.nativeElement;
      } else if (this.selectedSource === 'esp32-websocket' && this.esp32Canvas) {
          return this.esp32Canvas.nativeElement;
+     }else if (this.selectedSource === 'esp32-mjpeg' && this.mjpegImageElement) {
+          return this.mjpegImageElement.nativeElement;
      }
-     // else if (this.selectedSource === 'esp32-mjpeg' && this.mjpegElement) {
-     //     // TODO: Implement MJPEG drawing to hidden canvas
-     //     return this.hiddenMjpegCanvas; // หรือ mjpegElement ถ้า MediaPipe รองรับ img โดยตรงได้ดี
-     // }
-     return null;
+    return null;
   }
 
   adjustCanvasSize(width: number, height: number): void {
@@ -541,20 +645,95 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
          // Adjust other canvases if needed (e.g., hidden MJPEG canvas)
   }
 
+
+  // --- แยกการวาด Gaze Direction ---
+  private drawGazeDirection(ctx: CanvasRenderingContext2D, landmarks: NormalizedLandmark[], sourceWidth: number, sourceHeight: number): void {
+     try {
+        // ... (Logic การคำนวณ Eye Center และ Iris Avg เหมือนเดิม) ...
+        const rightEyeInner = landmarks[362]; const rightEyeOuter = landmarks[263];
+        const leftEyeInner = landmarks[133]; const leftEyeOuter = landmarks[33];
+        if(!rightEyeInner || !rightEyeOuter || !leftEyeInner || !leftEyeOuter) return;
+
+        const rightEyeCenterX = ((rightEyeInner.x + rightEyeOuter.x) / 2) * sourceWidth;
+        const rightEyeCenterY = ((rightEyeInner.y + rightEyeOuter.y) / 2) * sourceHeight;
+        const leftEyeCenterX = ((leftEyeInner.x + leftEyeOuter.x) / 2) * sourceWidth;
+        const leftEyeCenterY = ((leftEyeInner.y + leftEyeOuter.y) / 2) * sourceHeight;
+
+        const avgRightIris = this._calculateAveragePosition(landmarks, RIGHT_IRIS_INDICES);
+        const avgLeftIris = this._calculateAveragePosition(landmarks, LEFT_IRIS_INDICES);
+
+        if (avgRightIris) {
+            const avgRightIrisX = avgRightIris.x * sourceWidth;
+            const avgRightIrisY = avgRightIris.y * sourceHeight;
+            const rightGazeVecX = avgRightIrisX - rightEyeCenterX;
+            const rightGazeVecY = avgRightIrisY - rightEyeCenterY;
+            this.drawArrow(ctx, rightEyeCenterX, rightEyeCenterY, rightGazeVecX, rightGazeVecY, 'red', 2, 20); // ลดความยาวลงหน่อย
+        }
+        if (avgLeftIris) {
+            const avgLeftIrisX = avgLeftIris.x * sourceWidth;
+            const avgLeftIrisY = avgLeftIris.y * sourceHeight;
+            const leftGazeVecX = avgLeftIrisX - leftEyeCenterX;
+            const leftGazeVecY = avgLeftIrisY - leftEyeCenterY;
+            this.drawArrow(ctx, leftEyeCenterX, leftEyeCenterY, leftGazeVecX, leftGazeVecY, 'lime', 2, 20); // ลดความยาวลงหน่อย
+        }
+
+     } catch (error) {
+        console.error("Error drawing gaze direction arrows:", error);
+     }
+  }
    // ปรับ drawLandmarks ให้รับขนาด Canvas/Video มาด้วย
   private drawLandmarks(ctx: CanvasRenderingContext2D, landmarks: NormalizedLandmark[], sourceWidth: number, sourceHeight: number): void {
-       if (!landmarks || sourceWidth === 0 || sourceHeight === 0) return;
-       ctx.fillStyle = 'aqua';
-       ctx.strokeStyle = 'white';
-       ctx.lineWidth = 0.5;
+     if (!landmarks || sourceWidth === 0 || sourceHeight === 0) return;
+     ctx.save();
+     ctx.fillStyle = 'aqua';
+     landmarks.forEach((point: NormalizedLandmark) => {
+         const x = point.x * sourceWidth;
+         const y = point.y * sourceHeight;
+         ctx.beginPath();
+         ctx.arc(x, y, 1.5, 0, 2 * Math.PI);
+         ctx.fill();
+     });
+     ctx.restore();
+  }
 
-       landmarks.forEach((point: NormalizedLandmark) => {
-           const x = point.x * sourceWidth; // ใช้ sourceWidth
-           const y = point.y * sourceHeight; // ใช้ sourceHeight
-           ctx.beginPath();
-           ctx.arc(x, y, 1.5, 0, 2 * Math.PI); // ขยายจุดเล็กน้อย
-           ctx.fill();
-       });
-       // TODO: วาดส่วนอื่นๆ ที่น่าสนใจ
+  private drawArrow(ctx: CanvasRenderingContext2D, fromX: number, fromY: number, vecX: number, vecY: number, color: string, lineWidth: number, arrowLength: number): void {
+    const magnitude = Math.sqrt(vecX * vecX + vecY * vecY);
+    if (magnitude === 0) return; // หลีกเลี่ยงการหารด้วยศูนย์
+
+    // ทำให้เวกเตอร์มีความยาวเท่ากับ arrowLength
+    const normVecX = (vecX / magnitude) * arrowLength;
+    const normVecY = (vecY / magnitude) * arrowLength;
+
+    const toX = fromX + normVecX;
+    const toY = fromY + normVecY;
+
+    // วาดเส้นหลักของลูกศร
+    ctx.beginPath();
+    ctx.moveTo(fromX, fromY);
+    ctx.lineTo(toX, toY);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+
+    // (Optional) วาดหัวลูกศร - อาจจะซับซ้อนเล็กน้อย
+    // คำนวณมุมของลูกศร
+    const angle = Math.atan2(vecY, vecX);
+    const headLength = arrowLength * 0.4; // ความยาวหัวลูกศร (ปรับได้)
+    const headAngle = Math.PI / 6; // มุมของหัวลูกศร (30 องศา)
+
+    // จุดปีกหัวลูกศรด้านหนึ่ง
+    const headX1 = toX - headLength * Math.cos(angle - headAngle);
+    const headY1 = toY - headLength * Math.sin(angle - headAngle);
+    // จุดปีกหัวลูกศรอีกด้าน
+    const headX2 = toX - headLength * Math.cos(angle + headAngle);
+    const headY2 = toY - headLength * Math.sin(angle + headAngle);
+
+    ctx.beginPath();
+    ctx.moveTo(toX, toY);
+    ctx.lineTo(headX1, headY1);
+    ctx.moveTo(toX, toY);
+    ctx.lineTo(headX2, headY2);
+    ctx.stroke(); // ใช้วาดเส้นเดิม strokeStyle, lineWidth
+
   }
 }

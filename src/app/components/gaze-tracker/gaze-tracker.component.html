@@ -21,7 +21,7 @@
     Start Calibration
   </button>
   <button (click)="clearCalibrationAndResetModel()"
-    [disabled]="!calibrationService.isCalibrated()">
+    [disabled]="!calibrationService.isCalibratedAndTrained() && calibrationService.getPointsCollectedCount() === 0">
     Clear Calibration
   </button>
 </div>
@@ -40,8 +40,16 @@
 
   <!-- ESP32 MJPEG Stream Image -->
   <!-- *** เพิ่ม #mjpegImageElement, (load), (error) และผูก [src] *** -->
-  <img #mjpegImageElement [hidden]="selectedSource !== 'esp32-mjpeg'" [src]="mjpegStreamUrl" alt="ESP32 MJPEG Stream"
-    width="640" height="480" (load)="onMjpegLoadSuccess()" (error)="onMjpegLoadError($event)">
+  <<img #mjpegImageElement
+     [hidden]="selectedSource !== 'esp32-mjpeg'"
+     [src]="mjpegStreamUrl"
+     alt="ESP32 MJPEG Stream"
+     width="640" height="480"
+     (load)="onMjpegLoadSuccess()"
+     (error)="onMjpegLoadError($event)">
+
+  <div #gazeCursor class="gaze-cursor" [style.left.px]="gazeX" [style.top.px]="gazeY">
+  </div>
 
   <!-- Debug Canvas (ซ้อนทับอยู่บนสุด) -->
   <canvas #debugCanvas class="debug-overlay" width="640" height="480"></canvas>

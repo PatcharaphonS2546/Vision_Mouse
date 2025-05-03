@@ -19,16 +19,17 @@ export interface HeadPoseData {
 export interface CalibrationDataPoint {
   screenX: number; // พิกัด X ของจุดบนหน้าจอ
   screenY: number; // พิกัด Y ของจุดบนหน้าจอ
-  landmarkData: LandmarkData; // TODO: กำหนด Type ที่ชัดเจนสำหรับ Landmark Data
-  headPoseData: HeadPoseData; // TODO: กำหนด Type สำหรับ Head Pose Matrix (ถ้าใช้)
+  features: number[]; // <--- เก็บ Feature ที่คำนวณแล้ว (Array of numbers)
 }
+
+export const MIN_CALIBRATION_POINTS_FOR_TRAINING = 5;
 
 @Injectable({
   providedIn: 'root'
 })
 export class CalibrationService {
-   private calibrationPoints: CalibrationDataPoint[] = [];
-  private calibrated = false;
+  private calibrationPoints: CalibrationDataPoint[] = [];
+  private calibratedAndTrained  = false;
 
   constructor() { }
 
@@ -37,12 +38,16 @@ export class CalibrationService {
    * @param point ข้อมูลที่เก็บได้
    */
   addCalibrationPoint(point: CalibrationDataPoint): void {
-    // ใช้ structuredClone หรือวิธี Deep Copy อื่นๆ เพื่อป้องกันปัญหา Reference
-    // const pointCopy = structuredClone(point); // ใช้ได้ใน Browser สมัยใหม่ หรือต้องมี Polyfill
-    const pointCopy = JSON.parse(JSON.stringify(point)); // วิธี Deep Copy แบบง่าย (มีข้อจำกัด)
-    this.calibrationPoints.push(pointCopy);
-    console.log(`Calibration point ${this.calibrationPoints.length} added:`, pointCopy);
-    this.calibrated = false; // ยังไม่ถือว่า Calibrated จนกว่าจะ Train เสร็จ
+    // ตรวจสอบว่า features ไม่ใช่ null/undefined และเป็น array ก่อนเพิ่ม
+    if (point && Array.isArray(point.features) && point.features.length > 0) {
+         // ใช้ structuredClone หรือ JSON copy เหมือนเดิม
+        const pointCopy = JSON.parse(JSON.stringify(point));
+        this.calibrationPoints.push(pointCopy);
+        console.log(`Calibration point ${this.calibrationPoints.length} added.`);
+        this.calibratedAndTrained = false; // ต้อง Train ใหม่เสมอเมื่อเพิ่มจุด
+    } else {
+         console.warn("Attempted to add invalid calibration point (missing features).");
+    }
   }
 
   /**
@@ -59,7 +64,7 @@ export class CalibrationService {
    */
   clearCalibration(): void {
     this.calibrationPoints = [];
-    this.calibrated = false;
+    this.calibratedAndTrained  = false;
     console.log('Calibration data cleared.');
   }
 
@@ -67,10 +72,10 @@ export class CalibrationService {
    * ตั้งสถานะว่า Calibration สำเร็จ (และอาจจะ Train Model แล้ว)
    * @param status สถานะ (true = สำเร็จ)
    */
-   setCalibratedStatus(status: boolean): void {
-       this.calibrated = status;
+   setCalibratedAndTrainedStatus(status: boolean): void {
+       this.calibratedAndTrained  = status;
        if (!status) {
-            this.calibrationPoints = []; // ถ้าตั้งเป็น false ให้ล้างข้อมูลด้วย
+            this.clearCalibration(); // ถ้าตั้งเป็น false ให้ล้างข้อมูลด้วย
        }
    }
 
@@ -78,8 +83,8 @@ export class CalibrationService {
    * ตรวจสอบสถานะ Calibration
    * @returns true ถ้าผ่านการ Calibration และ Train Model แล้ว
    */
-  isCalibrated(): boolean {
-    return this.calibrated && this.calibrationPoints.length > 0;
+  isCalibratedAndTrained(): boolean {
+    return this.calibratedAndTrained;
   }
 
   /**
