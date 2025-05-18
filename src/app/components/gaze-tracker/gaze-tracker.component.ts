@@ -7,6 +7,7 @@ import { GazeEstimationService, PointOfGaze} from '../../services/gaze-estimatio
 import { FaceLandmarkerResult, NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { CalibrationComponent } from '../calibration/calibration.component';
 import { GazeProcessingService, FrameProcessingResult } from '../../services/gaze-processing.service';
+import { VisualizationOptions } from '../../services/visualization-options';
 
 const LEFT_IRIS_INDICES = [473, 474, 475, 476, 477];
 const RIGHT_IRIS_INDICES = [468, 469, 470, 471, 472]
@@ -51,6 +52,7 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
   gazeX = 0;
   gazeY = 0;
 
+  visualizationOptions = new VisualizationOptions('#00FF00', 4, 5.0); // กำหนดค่าตามต้องการ
 
   private async predictWebcam(): Promise<void> {
     if (!this.isTracking) {
@@ -140,7 +142,11 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
   async ngOnInit(): Promise<void> {
     this.statusMessage = 'Initializing MediaPipe...';
     await this.mediaPipeService.initialize();
-    this.statusMessage = this.mediaPipeService.isInitialized ? 'Ready.' : 'MediaPipe Init Failed!';
+    if (this.mediaPipeService.isInitialized) {
+      this.statusMessage = 'Ready. (FaceLandmarker model loaded)';
+    } else {
+      this.statusMessage = 'MediaPipe Init Failed! (FaceLandmarker model not loaded)';
+    }
     // ตั้งค่า Canvas สำหรับ ESP32
     this.esp32Ctx = this.esp32Canvas.nativeElement.getContext('2d');
   }
@@ -499,27 +505,7 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
        return null; // Unsupported type or not ready
    }
 
-  private predictAndApplyGaze(): void {
-        // ใช้ isCalibratedAndTrained() จาก Service
-        if (!this.isCalibrating && this.calibrationService.isCalibratedAndTrained() && this.lastLandmarksResult) {
-            // สกัด Feature ปัจจุบัน
-            const currentFeatures = this.extractFeaturesFromResults(this.lastLandmarksResult);
-
-            if (currentFeatures) {
-                // ทำนาย Gaze
-                const pog: PointOfGaze | null = this.gazeEstimationService.predictGaze(currentFeatures); // <--- ส่งเฉพาะ Features
-
-                if (pog) {
-                    this.ngZone.run(() => {
-                        this.gazeX = pog.x;
-                        this.gazeY = pog.y;
-                    });
-                }
-            }
-        }
-  }
-
-   private storeLatestResults(results: FaceLandmarkerResult | undefined | null): void { /* ...โค้ดเดิม... */
+  private storeLatestResults(results: FaceLandmarkerResult | undefined | null): void { /* ...โค้ดเดิม... */
       try {
           this.lastLandmarksResult = results ? structuredClone(results) : null;
       } catch (e) {
@@ -562,28 +548,42 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
       if (landmarks.length < 478) return null; // ตรวจสอบจำนวน Landmark
 
       // 1. คำนวณตำแหน่งศูนย์กลาง Iris (Normalized Coords)
-      const leftIrisCenter = this._calculateAveragePosition(landmarks, LEFT_IRIS_INDICES);
-      const rightIrisCenter = this._calculateAveragePosition(landmarks, RIGHT_IRIS_INDICES);
+      const leftIrisCenterRaw = this._calculateAveragePosition(landmarks, LEFT_IRIS_INDICES);
+      const rightIrisCenterRaw = this._calculateAveragePosition(landmarks, RIGHT_IRIS_INDICES);
 
-      if (!leftIrisCenter || !rightIrisCenter) {
-          // console.warn("Feature extraction failed: Could not calculate iris centers.");
+      if (!leftIrisCenterRaw || !rightIrisCenterRaw) {
           return null; // หา Iris ไม่เจอ
       }
 
-      // 2. ดึงข้อมูล Head Pose (Translation)
-      let tx = 0, ty = 0, tz = 0; // ค่าเริ่มต้น (กรณีไม่มี Head Pose)
+      // 1.1 Affine Transform (Head Pose Normalization)
+      let leftIrisCenter = leftIrisCenterRaw;
+      let rightIrisCenter = rightIrisCenterRaw;
       const headMatrix = results.facialTransformationMatrixes?.[0]?.data;
+      if (headMatrix && headMatrix.length === 16) {
+        // ใช้ static method ของ GazeEstimationService โดยตรง
+        const leftIris3D = { x: leftIrisCenterRaw.x, y: leftIrisCenterRaw.y, z: leftIrisCenterRaw.z ?? 0 };
+        const rightIris3D = { x: rightIrisCenterRaw.x, y: rightIrisCenterRaw.y, z: rightIrisCenterRaw.z ?? 0 };
+        leftIrisCenter = GazeEstimationService.applyAffineToLandmark(leftIris3D, headMatrix);
+        rightIrisCenter = GazeEstimationService.applyAffineToLandmark(rightIris3D, headMatrix);
+        // Temporal smoothing (moving average or Kalman)
+        leftIrisCenter = this.gazeEstimationService.smoothEyeballCenter({ ...leftIrisCenter, z: leftIrisCenter.z ?? 0 });
+        rightIrisCenter = this.gazeEstimationService.smoothEyeballCenter({ ...rightIrisCenter, z: rightIrisCenter.z ?? 0 });
+      }
+
+      // 2. ดึงข้อมูล Head Pose (Translation + Rotation)
+      let tx = 0, ty = 0, tz = 0;
+      let pitch = 0, yaw = 0, roll = 0;
       if (headMatrix && headMatrix.length === 16) {
           tx = headMatrix[12];
           ty = headMatrix[13];
           tz = headMatrix[14];
-      } else {
-         // console.warn("Head pose data missing or invalid for feature extraction.");
-         // ไม่ต้องทำอะไร ใช้ค่าเริ่มต้น 0
+          const euler = this._rotationMatrixToEuler(headMatrix);
+          pitch = euler.pitch;
+          yaw = euler.yaw;
+          roll = euler.roll;
       }
 
       // --- 3. สร้าง Feature Vector ---
-      // ตัวอย่าง: [leftIrisX, leftIrisY, rightIrisX, rightIrisY, headTx, headTy, headTz]
       const features: number[] = [
           leftIrisCenter.x,
           leftIrisCenter.y,
@@ -591,12 +591,12 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
           rightIrisCenter.y,
           tx,
           ty,
-          tz
-          // *** สามารถเพิ่ม/ปรับปรุง Features ตรงนี้ได้ ***
-          // เช่น ระยะห่างระหว่าง Iris, ระยะห่าง Iris กับมุมตา, หรือค่า Rotation จาก Head Pose
+          tz,
+          pitch,
+          yaw,
+          roll
       ];
 
-      // ตรวจสอบ NaN (สำคัญ)
       if (features.some(isNaN)) {
           console.warn("NaN value detected in extracted features:", features);
           return null;
@@ -605,21 +605,37 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
       return features;
   }
 
-  private _calculateAveragePosition(landmarks: NormalizedLandmark[], indices: number[]): { x: number, y: number, z?: number } | null {
-      let sumX = 0, sumY = 0, sumZ = 0, count = 0;
-      let hasZ = false;
-      for (const index of indices) {
-          const lm = landmarks?.[index];
-          if (lm && typeof lm.x === 'number' && typeof lm.y === 'number') {
-              sumX += lm.x; sumY += lm.y;
-              if (typeof lm.z === 'number') { sumZ += lm.z; hasZ = true; }
-              count++;
-          }
+  // ฟังก์ชันช่วย: แปลง 4x4 rotation matrix (array 16 ตัว) เป็น Euler angles (pitch, yaw, roll)
+  private _rotationMatrixToEuler(matrix: number[]): { pitch: number, yaw: number, roll: number } {
+      // matrix: 16 elements, row-major
+      // [ 0  1  2  3
+      //   4  5  6  7
+      //   8  9 10 11
+      //  12 13 14 15 ]
+      // ใช้เฉพาะ 3x3 แรก
+      const m00 = matrix[0], m01 = matrix[1], m02 = matrix[2];
+      const m10 = matrix[4], m11 = matrix[5], m12 = matrix[6];
+      const m20 = matrix[8], m21 = matrix[9], m22 = matrix[10];
+      let pitch, yaw, roll;
+      // Yaw (y), Pitch (x), Roll (z) ตามมาตรฐาน Tait-Bryan angles (YZX)
+      // อ้างอิง: https://www.geometrictools.com/Documentation/EulerAngles.pdf
+      if (Math.abs(m20) < 1) {
+          pitch = Math.asin(-m20);
+          roll = Math.atan2(m21, m22);
+          yaw = Math.atan2(m10, m00);
+      } else {
+          // Gimbal lock
+          pitch = Math.asin(-m20);
+          roll = 0;
+          yaw = Math.atan2(-m01, m11);
       }
-      if (count === 0) return null;
-      const avgPos: { x: number, y: number, z?: number } = { x: sumX / count, y: sumY / count };
-      if (hasZ) { avgPos.z = sumZ / count; }
-      return avgPos;
+      // แปลงจาก radians เป็น degrees (optional)
+      const rad2deg = 180 / Math.PI;
+      return {
+          pitch: pitch * rad2deg,
+          yaw: yaw * rad2deg,
+          roll: roll * rad2deg
+      };
   }
 
   getVideoSourceElement(): HTMLVideoElement | HTMLCanvasElement | HTMLImageElement | null {
@@ -645,43 +661,7 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
          // Adjust other canvases if needed (e.g., hidden MJPEG canvas)
   }
 
-
-  // --- แยกการวาด Gaze Direction ---
-  private drawGazeDirection(ctx: CanvasRenderingContext2D, landmarks: NormalizedLandmark[], sourceWidth: number, sourceHeight: number): void {
-     try {
-        // ... (Logic การคำนวณ Eye Center และ Iris Avg เหมือนเดิม) ...
-        const rightEyeInner = landmarks[362]; const rightEyeOuter = landmarks[263];
-        const leftEyeInner = landmarks[133]; const leftEyeOuter = landmarks[33];
-        if(!rightEyeInner || !rightEyeOuter || !leftEyeInner || !leftEyeOuter) return;
-
-        const rightEyeCenterX = ((rightEyeInner.x + rightEyeOuter.x) / 2) * sourceWidth;
-        const rightEyeCenterY = ((rightEyeInner.y + rightEyeOuter.y) / 2) * sourceHeight;
-        const leftEyeCenterX = ((leftEyeInner.x + leftEyeOuter.x) / 2) * sourceWidth;
-        const leftEyeCenterY = ((leftEyeInner.y + leftEyeOuter.y) / 2) * sourceHeight;
-
-        const avgRightIris = this._calculateAveragePosition(landmarks, RIGHT_IRIS_INDICES);
-        const avgLeftIris = this._calculateAveragePosition(landmarks, LEFT_IRIS_INDICES);
-
-        if (avgRightIris) {
-            const avgRightIrisX = avgRightIris.x * sourceWidth;
-            const avgRightIrisY = avgRightIris.y * sourceHeight;
-            const rightGazeVecX = avgRightIrisX - rightEyeCenterX;
-            const rightGazeVecY = avgRightIrisY - rightEyeCenterY;
-            this.drawArrow(ctx, rightEyeCenterX, rightEyeCenterY, rightGazeVecX, rightGazeVecY, 'red', 2, 20); // ลดความยาวลงหน่อย
-        }
-        if (avgLeftIris) {
-            const avgLeftIrisX = avgLeftIris.x * sourceWidth;
-            const avgLeftIrisY = avgLeftIris.y * sourceHeight;
-            const leftGazeVecX = avgLeftIrisX - leftEyeCenterX;
-            const leftGazeVecY = avgLeftIrisY - leftEyeCenterY;
-            this.drawArrow(ctx, leftEyeCenterX, leftEyeCenterY, leftGazeVecX, leftGazeVecY, 'lime', 2, 20); // ลดความยาวลงหน่อย
-        }
-
-     } catch (error) {
-        console.error("Error drawing gaze direction arrows:", error);
-     }
-  }
-   // ปรับ drawLandmarks ให้รับขนาด Canvas/Video มาด้วย
+  // ปรับ drawLandmarks ให้รับขนาด Canvas/Video มาด้วย
   private drawLandmarks(ctx: CanvasRenderingContext2D, landmarks: NormalizedLandmark[], sourceWidth: number, sourceHeight: number): void {
      if (!landmarks || sourceWidth === 0 || sourceHeight === 0) return;
      ctx.save();
@@ -735,5 +715,41 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
     ctx.lineTo(headX2, headY2);
     ctx.stroke(); // ใช้วาดเส้นเดิม strokeStyle, lineWidth
 
+  }
+
+  // ฟังก์ชันช่วย: คำนวณตำแหน่งเฉลี่ยของจุด landmark ตาม indices ที่กำหนด
+  private _calculateAveragePosition(landmarks: NormalizedLandmark[], indices: number[]): { x: number, y: number, z?: number } | null {
+      let sumX = 0, sumY = 0, sumZ = 0, count = 0;
+      let hasZ = false;
+      for (const index of indices) {
+          const lm = landmarks?.[index];
+          if (lm && typeof lm.x === 'number' && typeof lm.y === 'number') {
+              sumX += lm.x; sumY += lm.y;
+              if (typeof lm.z === 'number') { sumZ += lm.z; hasZ = true; }
+              count++;
+          }
+      }
+      if (count === 0) return null;
+      const avgPos: { x: number, y: number, z?: number } = { x: sumX / count, y: sumY / count };
+      if (hasZ) { avgPos.z = sumZ / count; }
+      return avgPos;
+  }
+
+  private drawGazeArrow(center: number[], vector: number[], color?: string) {
+    const ctx = this.debugCanvas?.nativeElement?.getContext('2d');
+    if (!ctx || !center || !vector) return;
+    const scale = this.visualizationOptions.lengthCoefficient * 40; // ปรับ scale ตามความเหมาะสม
+    const fromX = center[0] * ctx.canvas.width;
+    const fromY = center[1] * ctx.canvas.height;
+    const toX = fromX + vector[0] * scale;
+    const toY = fromY + vector[1] * scale;
+    ctx.save();
+    ctx.strokeStyle = color || this.visualizationOptions.color;
+    ctx.lineWidth = this.visualizationOptions.lineThickness;
+    ctx.beginPath();
+    ctx.moveTo(fromX, fromY);
+    ctx.lineTo(toX, toY);
+    ctx.stroke();
+    ctx.restore();
   }
 }

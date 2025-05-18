@@ -1,4 +1,4 @@
-import { NgIf } from '@angular/common';
+import { NgIf, NgStyle } from '@angular/common';
 import { Component, OnInit, Output, EventEmitter, HostListener, ElementRef, OnDestroy } from '@angular/core';
 
 const POINT_DISPLAY_TIME_MS = 1500; // เวลาแสดงจุดก่อนให้กด
@@ -9,14 +9,15 @@ const FEEDBACK_TIME_MS = 500; // เวลาแสดง Feedback "Got it!"
   standalone: true,
   templateUrl: './calibration.component.html',
   styleUrl: './calibration.component.css',
-  imports: [NgIf]
+  imports: [NgIf, NgStyle]
 })
 export class CalibrationComponent implements OnInit, OnDestroy {
 
   public readonly calibrationPositions = [
-    { x: 10, y: 10 }, { x: 50, y: 10 }, { x: 90, y: 10 },
-    { x: 10, y: 50 }, { x: 50, y: 50 }, { x: 90, y: 50 },
-    { x: 10, y: 90 }, { x: 50, y: 90 }, { x: 90, y: 90 },
+    { x: 10, y: 10 }, { x: 30, y: 10 }, { x: 50, y: 10 }, { x: 70, y: 10 }, { x: 90, y: 10 },
+    { x: 10, y: 30 }, { x: 30, y: 30 }, { x: 50, y: 30 }, { x: 70, y: 30 }, { x: 90, y: 30 },
+    { x: 10, y: 50 }, { x: 30, y: 50 }, { x: 50, y: 50 }, { x: 70, y: 50 }, { x: 90, y: 50 },
+    { x: 50, y: 90 }
   ];
 
   @Output() calibrationPointTarget = new EventEmitter<{ x: number, y: number }>();
@@ -31,10 +32,16 @@ export class CalibrationComponent implements OnInit, OnDestroy {
   private pointTimeoutId: any = null;
   private feedbackTimeoutId: any = null;
 
+  pointsCollected = 0;
+  totalPoints = this.calibrationPositions.length;
+  feedbackColor = '';
+
   constructor(private elRef: ElementRef<HTMLElement>) {}
 
   ngOnInit(): void {
     this.instruction = "Calibration starting... Press SPACE when ready to capture.";
+    this.pointsCollected = 0;
+    this.feedbackColor = '';
     this.pointTimeoutId = setTimeout(() => {
       this.nextPoint();
     }, 2000);
@@ -43,6 +50,7 @@ export class CalibrationComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     clearTimeout(this.pointTimeoutId);
     clearTimeout(this.feedbackTimeoutId);
+    this.feedbackColor = '';
   }
 
   // --- แก้ไขส่วนที่เคยใช้ CALIBRATION_POSITIONS ให้ใช้ this.calibrationPositions ---
@@ -77,12 +85,15 @@ export class CalibrationComponent implements OnInit, OnDestroy {
   }
 
   private capturePoint(): void {
-    if (this.canCapture && this.currentPointIndex < this.calibrationPositions.length) { // <--- แก้ไขตรงนี้
+    if (this.canCapture && this.currentPointIndex < this.calibrationPositions.length) {
        this.canCapture = false;
        this.showPoint = false;
        this.instruction = "Got it!";
+       this.feedbackColor = 'limegreen';
        this.calibrationPointTarget.emit({ x: this.currentPointScreenCoords.x, y: this.currentPointScreenCoords.y });
+       this.pointsCollected++;
        this.feedbackTimeoutId = setTimeout(() => {
+           this.feedbackColor = '';
            this.nextPoint();
        }, FEEDBACK_TIME_MS);
     }

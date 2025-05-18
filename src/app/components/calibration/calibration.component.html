@@ -1,13 +1,17 @@
 <div class="calibration-overlay">
   <!-- จุด Calibration -->
   <div *ngIf="showPoint" class="calibration-point" [style.left]="currentPointPosition.left"
-    [style.top]="currentPointPosition.top">
+    [style.top]="currentPointPosition.top" [ngStyle]="{ 'background-color': feedbackColor || '#ff4444' }">
   </div>
 
   <!-- ข้อความแนะนำ -->
   <div class="calibration-instructions">
-    {{ instruction }} <span *ngIf="currentPointIndex >= 0 && currentPointIndex < calibrationPositions.length">(ESC to
-      Cancel)</span>
+    {{ instruction }}
+    <span *ngIf="currentPointIndex >= 0 && currentPointIndex < calibrationPositions.length">
+      (ESC to Cancel)
+    </span>
+    <br>
+    <span *ngIf="totalPoints > 0">Point {{ pointsCollected }} / {{ totalPoints }}</span>
   </div>
 </div>
 

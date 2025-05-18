@@ -1,6 +1,8 @@
 import { Injectable } from '@angular/core';
 import * as regression from 'regression'; // Import library for Linear Regression
 import { MIN_CALIBRATION_POINTS_FOR_TRAINING } from './calibration.service';
+// @ts-ignore
+import MLR from 'ml-regression-multivariate-linear';
 
 export interface PointOfGaze {
   x: number;
@@ -9,9 +11,7 @@ export interface PointOfGaze {
 
 // Interface for storing the trained regression model results
 interface GazeModel {
-  // Note: regression.Result includes 'predict' method, coefficients ('equation'), r2, etc.
-  modelX: regression.Result | null; // Stores the result from regression.js for the X-axis
-  modelY: regression.Result | null; // Stores the result from regression.js for the Y-axis
+  model: any | null; // Multivariate regression model (use any to avoid type error)
 }
 
 // Define constants for configuration
@@ -19,14 +19,25 @@ export const MIN_CALIBRATION_POINTS = 5; // Minimum calibration points required 
 const SMOOTHING_WINDOW = 4;       // Number of frames for smoothing  (higher value -> smoother but slower response)
 const REGRESSION_PRECISION = 5;   // Number of decimal places for regression results
 
+// Kalman filter parameters
+const KALMAN_R = 10; // Measurement noise covariance
+const KALMAN_Q = 0.1; // Process noise covariance
+
 @Injectable({
   providedIn: 'root'
 })
 export class GazeEstimationService {
 
-  private gazeModel: GazeModel = { modelX: null, modelY: null };
+  private gazeModel: GazeModel = { model: null };
   private isTrained: boolean = false;
   private gazeHistory: PointOfGaze[] = [];
+
+  private kalmanStateX = { x: 0, p: 1 };
+  private kalmanStateY = { x: 0, p: 1 };
+  private kalmanInitialized = false;
+
+  private eyeballBuffer: {x: number, y: number, z: number}[] = [];
+  private static readonly EYE_SMOOTH_WINDOW = 2;
 
   constructor() { }
 
@@ -35,75 +46,91 @@ export class GazeEstimationService {
     console.log('Attempting to train gaze model with', features.length, 'feature sets.');
     this.resetModel();
 
-    // Validate input data
     if (features.length < MIN_CALIBRATION_POINTS || features.length !== targetsX.length || features.length !== targetsY.length) {
       console.warn(`Insufficient or mismatched data for training. Features: ${features.length}, TargetsX: ${targetsX.length}, TargetsY: ${targetsY.length}. Need at least ${MIN_CALIBRATION_POINTS}.`);
       return;
     }
 
-    // Prepare data for regression
-    const dataForX: [number, number][] = features.map((f, index) => [f[0], targetsX[index]]);
-    const dataForY: [number, number][] = features.map((f, index) => [f[0], targetsY[index]]);
+    // Prepare data for multivariate regression
+    // X: NxM (N samples, M features), Y: Nx2 ([x, y] targets)
+    // ตรวจสอบว่า features ทุกแถวมีขนาดเท่ากัน
+    const featureLength = features[0]?.length || 0;
+    if (!features.every(f => f.length === featureLength)) {
+      console.error('Training aborted: Not all feature vectors have the same length.', features.map(f => f.length));
+      return;
+    }
+    // Expect 10 features for training
+    if (featureLength !== 10) {
+      console.warn(`Training aborted: Feature vector length mismatch. Expected 10, got ${featureLength}`);
+      return;
+    }
+    const X = features;
+    const Y = features.map((_, i) => [targetsX[i], targetsY[i]]);
 
     try {
-      console.log(`Training with ${dataForX.length} valid data points using Polynomial Regression (Order 2).`);
-
-      // Train models using Polynomial Regression
-      this.gazeModel.modelX = regression.polynomial(dataForX, { order: 2, precision: REGRESSION_PRECISION });
-      this.gazeModel.modelY = regression.polynomial(dataForY, { order: 2, precision: REGRESSION_PRECISION });
-
-      console.log('Model X Equation:', this.gazeModel.modelX.string);
-      console.log('Model Y Equation:', this.gazeModel.modelY.string);
-      console.log('Model X R2:', this.gazeModel.modelX.r2);
-      console.log('Model Y R2:', this.gazeModel.modelY.r2);
-
-      this.isTrained = !!(this.gazeModel.modelX && this.gazeModel.modelY);
-
-      if (this.isTrained) {
-        console.log('Gaze estimation model trained successfully.');
-      } else {
-        console.error('Polynomial regression failed to produce models.');
-        this.resetModel();
-      }
-
-    } catch (error) {
-      console.error('Error training polynomial regression model:', error);
+      const mlr = new MLR(X, Y);
+      this.gazeModel.model = mlr;
+      this.isTrained = true;
+      console.log('Multivariate regression model trained.');
+    } catch (e) {
+      console.error('Failed to train multivariate regression model:', e);
       this.resetModel();
     }
   }
 
   predictGaze(currentFeatures: number[]): PointOfGaze | null {
-    if (!this.isTrained || !this.gazeModel.modelX || !this.gazeModel.modelY) {
-      console.warn('Prediction skipped: Model is not trained.');
+    if (!this.isTrained || !this.gazeModel.model) {
+      console.warn('[Gaze Prediction] Skipped: Model is not trained.');
       return null;
     }
 
     if (!Array.isArray(currentFeatures) || currentFeatures.length === 0) {
-      console.warn('Prediction skipped: Invalid current features array.');
+      console.warn('[Gaze Prediction] Skipped: Invalid features input.');
+      return null;
+    }
+
+    // Expect 10 features
+    const expectedLength = 10;
+    if (currentFeatures.length !== expectedLength) {
+      console.warn(`[Gaze Prediction] Skipped: Feature length mismatch (expected ${expectedLength}, got ${currentFeatures.length})`);
       return null;
     }
 
     try {
-      const featureValue = currentFeatures[0]; // Use the first feature for prediction
-      const predictedX = this.gazeModel.modelX.predict(featureValue)[1];
-      const predictedY = this.gazeModel.modelY.predict(featureValue)[1];
+      // Make prediction
+      const prediction = this.gazeModel.model.predict(currentFeatures);
+
+      if (!Array.isArray(prediction) || prediction.length < 2) {
+        console.warn('[Gaze Prediction] Failed: Unexpected prediction format.', prediction);
+        return null;
+      }
+
+      const [predictedX, predictedY] = prediction;
 
       if (isNaN(predictedX) || isNaN(predictedY)) {
-        console.warn('Prediction resulted in NaN. Features:', currentFeatures);
+        console.warn('[Gaze Prediction] Failed: NaN detected in prediction.', { predictedX, predictedY });
         return null;
       }
 
       const rawGaze: PointOfGaze = { x: predictedX, y: predictedY };
-      return this._applySmoothing(rawGaze);
+
+      // Apply Kalman filter for smoothing
+      const smoothedGaze = this._applySmoothing(rawGaze);
+
+      // Optional: log prediction
+      // console.debug('[Gaze Prediction] Raw:', rawGaze, 'Smoothed:', smoothedGaze);
+
+      return smoothedGaze;
 
     } catch (error) {
-      console.error('Error predicting gaze:', error);
+      console.error('[Gaze Prediction] Error during prediction:', error);
       return null;
     }
   }
 
+
   resetModel(): void {
-    this.gazeModel = { modelX: null, modelY: null };
+    this.gazeModel = { model: null };
     this.isTrained = false;
     this.resetSmoothing(); // Also reset smoothing history when model is reset
     console.log("Gaze estimation model reset.");
@@ -115,22 +142,60 @@ export class GazeEstimationService {
 
   // --- Smoothing Logic ---
   private _applySmoothing(newGaze: PointOfGaze): PointOfGaze {
-      this.gazeHistory.push(newGaze);
-      if (this.gazeHistory.length > SMOOTHING_WINDOW) {
-        this.gazeHistory.shift();
-      }
-      if (this.gazeHistory.length === 0) return newGaze;
-      let sumX = 0, sumY = 0;
-      for (const gaze of this.gazeHistory) {
-        sumX += gaze.x;
-        sumY += gaze.y;
-      }
-      return { x: sumX / this.gazeHistory.length, y: sumY / this.gazeHistory.length };
+    // Kalman filter for each axis
+    if (!this.kalmanInitialized) {
+      this.kalmanStateX = { x: newGaze.x, p: 1 };
+      this.kalmanStateY = { x: newGaze.y, p: 1 };
+      this.kalmanInitialized = true;
+      return { x: newGaze.x, y: newGaze.y };
+    }
+    // Predict
+    this.kalmanStateX.p += KALMAN_Q;
+    this.kalmanStateY.p += KALMAN_Q;
+    // Update X
+    const kx = this.kalmanStateX.p / (this.kalmanStateX.p + KALMAN_R);
+    this.kalmanStateX.x = this.kalmanStateX.x + kx * (newGaze.x - this.kalmanStateX.x);
+    this.kalmanStateX.p = (1 - kx) * this.kalmanStateX.p;
+    // Update Y
+    const ky = this.kalmanStateY.p / (this.kalmanStateY.p + KALMAN_R);
+    this.kalmanStateY.x = this.kalmanStateY.x + ky * (newGaze.y - this.kalmanStateY.x);
+    this.kalmanStateY.p = (1 - ky) * this.kalmanStateY.p;
+    return { x: this.kalmanStateX.x, y: this.kalmanStateY.x };
   }
 
   resetSmoothing(): void {
     this.gazeHistory = [];
+    this.kalmanInitialized = false;
   }
 
   // --- Feature Extraction Logic ---
+
+  // --- Affine Transformation & Temporal Smoothing for Eyeball Center ---
+
+  // Helper: Apply 4x4 affine transformation matrix to a 3D landmark
+  public static applyAffineToLandmark(lm: {x: number, y: number, z: number}, matrix: number[]): {x: number, y: number, z: number} {
+    const x = lm.x, y = lm.y, z = lm.z;
+    const m = matrix;
+    const tx = m[0]*x + m[1]*y + m[2]*z + m[3];
+    const ty = m[4]*x + m[5]*y + m[6]*z + m[7];
+    const tz = m[8]*x + m[9]*y + m[10]*z + m[11];
+    return { x: tx, y: ty, z: tz };
+  }
+
+  // Call this with the new (normalized) eyeball center every frame
+  public smoothEyeballCenter(newCenter: {x: number, y: number, z: number}): {x: number, y: number, z: number} {
+    this.eyeballBuffer.push(newCenter);
+    if (this.eyeballBuffer.length > GazeEstimationService.EYE_SMOOTH_WINDOW) this.eyeballBuffer.shift();
+    const avg = this.eyeballBuffer.reduce((acc, v) => ({
+      x: acc.x + v.x,
+      y: acc.y + v.y,
+      z: acc.z + v.z
+    }), {x:0, y:0, z:0});
+    const n = this.eyeballBuffer.length;
+    return { x: avg.x/n, y: avg.y/n, z: avg.z/n };
+  }
+
+  public resetEyeballSmoothing(): void {
+    this.eyeballBuffer = [];
+  }
 }

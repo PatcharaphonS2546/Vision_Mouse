@@ -18,6 +18,7 @@
     "@angular/platform-browser-dynamic": "^19.2.0",
     "@angular/router": "^19.2.0",
     "@mediapipe/tasks-vision": "^0.10.22-rc.20250304",
+    "ml-regression-multivariate-linear": "^2.0.4",
     "node-pre-gyp": "^0.17.0",
     "regression": "^2.0.1",
     "rxjs": "~7.8.0",
