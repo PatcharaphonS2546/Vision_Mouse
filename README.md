@@ -1,59 +1,49 @@
-# VisionControl
+# Vision Mouse
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 19.2.9.
+Vision Mouse คือโปรเจค Angular สำหรับควบคุมเมาส์ด้วยการติดตามสายตา (Gaze Tracking) โดยใช้เทคโนโลยี Mediapipe และ WebAssembly เพื่อประมวลผลใบหน้าและดวงตาแบบเรียลไทม์
 
-## Development server
+## คุณสมบัติ
 
-To start a local development server, run:
+- ติดตามการเคลื่อนไหวของดวงตาและใบหน้า
+- คำนวณทิศทางการมอง (Gaze Estimation)
+- ระบบ Calibration สำหรับปรับค่าการติดตาม
+- รองรับการเลือกแหล่งวิดีโอ (Video Source)
+- ประมวลผลแบบ Web Worker เพื่อประสิทธิภาพสูง
 
-```bash
-ng serve
-```
+## โครงสร้างโปรเจค
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+- `src/app/components` - คอมโพเนนต์หลัก เช่น Calibration, Gaze Tracker, Video Source
+- `src/app/services` - เซอร์วิสสำหรับประมวลผลและคำนวณ gaze, การจัดการวิดีโอ, การใช้งาน Mediapipe
+- `src/app/workers` - Web Worker สำหรับ gaze estimation
+- `src/assets/wasm` - ไฟล์ WebAssembly สำหรับ Mediapipe
 
-## Code scaffolding
+## การติดตั้งและใช้งาน
 
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
+1. ติดตั้ง dependencies
+    ```bash
+    npm install
+    ```
 
-```bash
-ng generate component component-name
-```
+2. รันโปรเจค
+    ```bash
+    npm start
+    ```
 
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+3. เปิดเบราว์เซอร์ที่ `http://localhost:4200`
 
-```bash
-ng generate --help
-```
-
-## Building
-
-To build the project run:
-
-```bash
-ng build
-```
-
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
-
-## Running unit tests
-
-To execute unit tests with the [Karma](https://karma-runner.github.io) test runner, use the following command:
+## การทดสอบ
 
 ```bash
-ng test
+npm test
 ```
 
-## Running end-to-end tests
+## เทคโนโลยีที่ใช้
 
-For end-to-end (e2e) testing, run:
+- Angular
+- Mediapipe
+- WebAssembly (WASM)
+- TypeScript
 
-```bash
-ng e2e
-```
+## ผู้พัฒนา
 
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
-
-## Additional Resources
-
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+- Patcharaphon Samakun
