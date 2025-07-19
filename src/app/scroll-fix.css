@@ -1,0 +1,50 @@
+/* EMERGENCY SCROLL FIX - Override ALL blocking styles */
+
+/* Reset all heights and overflow */
+html, body {
+  height: auto !important;
+  min-height: 100vh !important;
+  max-height: none !important;
+  overflow: visible !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+/* Force main containers to be scrollable */
+*, *::before, *::after {
+  max-height: none !important;
+}
+
+.app-container {
+  height: auto !important;
+  min-height: 100vh !important;
+  max-height: none !important;
+  overflow: visible !important;
+  overflow-y: auto !important;
+}
+
+.main-content {
+  height: auto !important;
+  min-height: 100vh !important;
+  max-height: none !important;
+  overflow: visible !important;
+  overflow-y: auto !important;
+}
+
+.modern-dashboard, .eye-tracking-test {
+  height: auto !important;
+  min-height: 100vh !important;
+  max-height: none !important;
+  overflow: visible !important;
+  overflow-y: auto !important;
+}
+
+/* Remove any position fixed that might block scrolling */
+body {
+  position: static !important;
+}
+
+/* Ensure scrollbar is always visible */
+html {
+  overflow-y: scroll !important;
+}

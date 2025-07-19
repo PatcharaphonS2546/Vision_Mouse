@@ -93,4 +93,30 @@ export class CalibrationService {
   getPointsCollectedCount(): number {
       return this.calibrationPoints.length;
   }
+
+  /**
+   * Calibrate using provided points (compatibility method)
+   * @param points Array of calibration points
+   * @returns Promise<boolean> indicating success
+   */
+  async calibrateWithPoints(points: CalibrationDataPoint[]): Promise<boolean> {
+    try {
+      // Clear existing points
+      this.clearCalibration();
+      
+      // Add all provided points
+      points.forEach(point => this.addCalibrationPoint(point));
+      
+      // Check if we have enough points
+      if (this.calibrationPoints.length >= MIN_CALIBRATION_POINTS_FOR_TRAINING) {
+        this.setCalibratedAndTrainedStatus(true);
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('Calibration with points failed:', error);
+      return false;
+    }
+  }
 }

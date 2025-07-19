@@ -1,16 +1,24 @@
 import { TestBed } from '@angular/core/testing';
 import { RouterModule } from '@angular/router';
+import { Component } from '@angular/core';
 import { AppComponent } from './app.component';
+
+// Mock component for testing
+@Component({
+  selector: 'app-advanced-gaze-tracker',
+  template: '<div>Mock Advanced Gaze Tracker</div>',
+  standalone: true
+})
+class MockAdvancedGazeTrackerComponent { }
 
 describe('AppComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [
-        RouterModule.forRoot([])
-      ],
-      declarations: [
-        AppComponent
-      ],
+        RouterModule.forRoot([]),
+        AppComponent,
+        MockAdvancedGazeTrackerComponent
+      ]
     }).compileComponents();
   });
 

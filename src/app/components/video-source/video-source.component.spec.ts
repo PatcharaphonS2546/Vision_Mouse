@@ -1,4 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { FormsModule } from '@angular/forms';
 
 import { VideoSourceComponent } from './video-source.component';
 
@@ -8,7 +9,7 @@ describe('VideoSourceComponent', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      declarations: [VideoSourceComponent]
+      imports: [VideoSourceComponent, FormsModule]
     })
     .compileComponents();
 

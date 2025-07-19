@@ -1,0 +1,263 @@
+// Design System - Color Palette
+// Professional color system for Vision Mouse application
+
+// Primary Colors - AI Blue Theme
+:root {
+  // Primary Brand Colors
+  --color-primary-50: #e8f2ff;
+  --color-primary-100: #c3dffe;
+  --color-primary-200: #9fcaff;
+  --color-primary-300: #7ab4ff;
+  --color-primary-400: #569fff;
+  --color-primary-500: #3b82f6; // Main brand blue
+  --color-primary-600: #2563eb;
+  --color-primary-700: #1d4ed8;
+  --color-primary-800: #1e40af;
+  --color-primary-900: #1e3a8a;
+  --color-primary-950: #172554;
+
+  // Accent Colors - AI Green
+  --color-accent-50: #ecfdf5;
+  --color-accent-100: #d1fae5;
+  --color-accent-200: #a7f3d0;
+  --color-accent-300: #6ee7b7;
+  --color-accent-400: #34d399;
+  --color-accent-500: #10b981; // Accent green
+  --color-accent-600: #059669;
+  --color-accent-700: #047857;
+  --color-accent-800: #065f46;
+  --color-accent-900: #064e3b;
+
+  // Neural Network Purple
+  --color-neural-50: #faf5ff;
+  --color-neural-100: #f3e8ff;
+  --color-neural-200: #e9d5ff;
+  --color-neural-300: #d8b4fe;
+  --color-neural-400: #c084fc;
+  --color-neural-500: #a855f7; // Neural purple
+  --color-neural-600: #9333ea;
+  --color-neural-700: #7c3aed;
+  --color-neural-800: #6b21a8;
+  --color-neural-900: #581c87;
+
+  // Semantic Colors
+  --color-success-50: #f0fdf4;
+  --color-success-100: #dcfce7;
+  --color-success-200: #bbf7d0;
+  --color-success-300: #86efac;
+  --color-success-400: #4ade80;
+  --color-success-500: #22c55e; // Success green
+  --color-success-600: #16a34a;
+  --color-success-700: #15803d;
+  --color-success-800: #166534;
+  --color-success-900: #14532d;
+
+  --color-warning-50: #fffbeb;
+  --color-warning-100: #fef3c7;
+  --color-warning-200: #fde68a;
+  --color-warning-300: #fcd34d;
+  --color-warning-400: #fbbf24;
+  --color-warning-500: #f59e0b; // Warning orange
+  --color-warning-600: #d97706;
+  --color-warning-700: #b45309;
+  --color-warning-800: #92400e;
+  --color-warning-900: #78350f;
+
+  --color-error-50: #fef2f2;
+  --color-error-100: #fee2e2;
+  --color-error-200: #fecaca;
+  --color-error-300: #fca5a5;
+  --color-error-400: #f87171;
+  --color-error-500: #ef4444; // Error red
+  --color-error-600: #dc2626;
+  --color-error-700: #b91c1c;
+  --color-error-800: #991b1b;
+  --color-error-900: #7f1d1d;
+
+  --color-info-50: #eff6ff;
+  --color-info-100: #dbeafe;
+  --color-info-200: #bfdbfe;
+  --color-info-300: #93c5fd;
+  --color-info-400: #60a5fa;
+  --color-info-500: #3b82f6; // Info blue
+  --color-info-600: #2563eb;
+  --color-info-700: #1d4ed8;
+  --color-info-800: #1e40af;
+  --color-info-900: #1e3a8a;
+
+  // Neutral Colors - Professional Grays
+  --color-neutral-0: #ffffff;
+  --color-neutral-50: #f9fafb;
+  --color-neutral-100: #f3f4f6;
+  --color-neutral-200: #e5e7eb;
+  --color-neutral-300: #d1d5db;
+  --color-neutral-400: #9ca3af;
+  --color-neutral-500: #6b7280;
+  --color-neutral-600: #4b5563;
+  --color-neutral-700: #374151;
+  --color-neutral-800: #1f2937;
+  --color-neutral-900: #111827;
+  --color-neutral-950: #030712;
+
+  // Gaze Tracking Specific Colors
+  --color-gaze-point: #ff6b6b;
+  --color-gaze-trail: rgba(255, 107, 107, 0.3);
+  --color-calibration-point: #4ecdc4;
+  --color-calibration-active: #45b7aa;
+  --color-heatmap-low: rgba(59, 130, 246, 0.2);
+  --color-heatmap-medium: rgba(251, 191, 36, 0.6);
+  --color-heatmap-high: rgba(239, 68, 68, 0.8);
+
+  // AI/ML Feature Colors
+  --color-ai-prediction: var(--color-neural-500);
+  --color-ml-confidence-high: var(--color-success-500);
+  --color-ml-confidence-medium: var(--color-warning-500);
+  --color-ml-confidence-low: var(--color-error-500);
+  --color-learning-active: var(--color-accent-500);
+  --color-pattern-reading: #8b5cf6;
+  --color-pattern-scanning: #06b6d4;
+  --color-pattern-focusing: #f59e0b;
+  --color-pattern-searching: #ef4444;
+}
+
+// Light Theme Variables
+[data-theme="light"] {
+  // Background Colors
+  --bg-primary: var(--color-neutral-0);
+  --bg-secondary: var(--color-neutral-50);
+  --bg-tertiary: var(--color-neutral-100);
+  --bg-surface: var(--color-neutral-0);
+  --bg-surface-elevated: var(--color-neutral-50);
+  --bg-overlay: rgba(0, 0, 0, 0.5);
+
+  // Text Colors
+  --text-primary: var(--color-neutral-900);
+  --text-secondary: var(--color-neutral-700);
+  --text-tertiary: var(--color-neutral-500);
+  --text-disabled: var(--color-neutral-400);
+  --text-inverse: var(--color-neutral-0);
+  --text-link: var(--color-primary-600);
+  --text-link-hover: var(--color-primary-700);
+
+  // Border Colors
+  --border-primary: var(--color-neutral-200);
+  --border-secondary: var(--color-neutral-300);
+  --border-focus: var(--color-primary-500);
+  --border-error: var(--color-error-500);
+
+  // Shadow Colors
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+}
+
+// Dark Theme Variables
+[data-theme="dark"] {
+  // Background Colors
+  --bg-primary: var(--color-neutral-950);
+  --bg-secondary: var(--color-neutral-900);
+  --bg-tertiary: var(--color-neutral-800);
+  --bg-surface: var(--color-neutral-900);
+  --bg-surface-elevated: var(--color-neutral-800);
+  --bg-overlay: rgba(0, 0, 0, 0.7);
+
+  // Text Colors
+  --text-primary: var(--color-neutral-100);
+  --text-secondary: var(--color-neutral-300);
+  --text-tertiary: var(--color-neutral-400);
+  --text-disabled: var(--color-neutral-600);
+  --text-inverse: var(--color-neutral-900);
+  --text-link: var(--color-primary-400);
+  --text-link-hover: var(--color-primary-300);
+
+  // Border Colors
+  --border-primary: var(--color-neutral-700);
+  --border-secondary: var(--color-neutral-600);
+  --border-focus: var(--color-primary-400);
+  --border-error: var(--color-error-400);
+
+  // Shadow Colors (adjusted for dark theme)
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 10px 10px -5px rgba(0, 0, 0, 0.3);
+  --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+}
+
+// High Contrast Theme for Accessibility
+[data-theme="high-contrast"] {
+  --bg-primary: #000000;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #000000;
+  --bg-surface: #000000;
+  --bg-surface-elevated: #ffffff;
+
+  --text-primary: #ffffff;
+  --text-secondary: #000000;
+  --text-tertiary: #ffffff;
+  --text-link: #ffff00;
+  --text-link-hover: #ffff99;
+
+  --border-primary: #ffffff;
+  --border-secondary: #ffffff;
+  --border-focus: #ffff00;
+  --border-error: #ff0000;
+
+  --color-primary-500: #0000ff;
+  --color-success-500: #00ff00;
+  --color-warning-500: #ffff00;
+  --color-error-500: #ff0000;
+}
+
+// Utility Color Classes
+.text-primary { color: var(--text-primary); }
+.text-secondary { color: var(--text-secondary); }
+.text-tertiary { color: var(--text-tertiary); }
+.text-success { color: var(--color-success-500); }
+.text-warning { color: var(--color-warning-500); }
+.text-error { color: var(--color-error-500); }
+.text-info { color: var(--color-info-500); }
+
+.bg-primary { background-color: var(--bg-primary); }
+.bg-secondary { background-color: var(--bg-secondary); }
+.bg-surface { background-color: var(--bg-surface); }
+.bg-success { background-color: var(--color-success-500); }
+.bg-warning { background-color: var(--color-warning-500); }
+.bg-error { background-color: var(--color-error-500); }
+.bg-info { background-color: var(--color-info-500); }
+
+.border-primary { border-color: var(--border-primary); }
+.border-focus { border-color: var(--border-focus); }
+.border-error { border-color: var(--border-error); }
+
+// Gaze Visualization Colors
+.gaze-point { 
+  background-color: var(--color-gaze-point);
+  box-shadow: 0 0 10px var(--color-gaze-point);
+}
+
+.gaze-trail {
+  background-color: var(--color-gaze-trail);
+}
+
+.calibration-point {
+  background-color: var(--color-calibration-point);
+  border: 2px solid var(--color-calibration-active);
+}
+
+.heatmap-low { background-color: var(--color-heatmap-low); }
+.heatmap-medium { background-color: var(--color-heatmap-medium); }
+.heatmap-high { background-color: var(--color-heatmap-high); }
+
+// AI/ML Feature Colors
+.ai-prediction { color: var(--color-ai-prediction); }
+.ml-confidence-high { color: var(--color-ml-confidence-high); }
+.ml-confidence-medium { color: var(--color-ml-confidence-medium); }
+.ml-confidence-low { color: var(--color-ml-confidence-low); }
+
+.pattern-reading { color: var(--color-pattern-reading); }
+.pattern-scanning { color: var(--color-pattern-scanning); }
+.pattern-focusing { color: var(--color-pattern-focusing); }
+.pattern-searching { color: var(--color-pattern-searching); }

@@ -4,6 +4,11 @@ import { MediapipeService } from './mediapipe.service';
 import { FaceLandmarkerResult, NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { AffineTransformer } from './affine-transformer';
 import { EyeballDetector } from './eyeball-detector';
+import { FaceTrackerService, FaceData } from './face-tracker.service';
+import { HeadPoseService, HeadPose } from './head-pose.service';
+import { EyeballDetector as EnhancedEyeballDetector, EyeRegion } from './enhanced-eyeball-detector';
+import { PerformanceService } from './performance.service';
+import { ErrorHandlerService } from './error-handler.service';
 import {
   BASE_FACE_MODEL,
   OUTER_HEAD_POINTS_MODEL,
@@ -28,27 +33,305 @@ import {
 const LEFT_IRIS_INDICES = [473, 474, 475, 476, 477]; // User's Left Eye
 const RIGHT_IRIS_INDICES = [468, 469, 470, 471, 472]; // User's Right Eye
 
-// ขยาย interface FrameProcessingResult ให้รองรับ gaze vector/eyeball center
+// Enhanced interface for frame processing results
 export interface FrameProcessingResult {
   mediaPipeResults: FaceLandmarkerResult | null;
   predictedGaze: PointOfGaze | null;
+  faceData: FaceData | null;
+  headPose: HeadPose | null;
+  leftEyeRegion: EyeRegion | null;
+  rightEyeRegion: EyeRegion | null;
   leftGazeVector?: number[] | null;
   rightGazeVector?: number[] | null;
   leftEyeballCenter?: number[] | null;
   rightEyeballCenter?: number[] | null;
+  processingTime: number;
+  quality: ProcessingQuality;
+}
+
+export interface ProcessingQuality {
+  faceTracking: number; // 0-1
+  eyeDetection: number; // 0-1
+  headPose: number; // 0-1
+  gazeEstimation: number; // 0-1
+  overall: number; // 0-1
 }
 
 @Injectable({
   providedIn: 'root'
 })
 export class GazeProcessingService {
-  private leftDetector = new EyeballDetector([...DEFAULT_LEFT_EYE_CENTER_MODEL]);
-  private rightDetector = new EyeballDetector([...DEFAULT_RIGHT_EYE_CENTER_MODEL]);
+  // Legacy detectors for backward compatibility
+  private leftDetector = new EyeballDetector();
+  private rightDetector = new EyeballDetector();
+  
+  // Enhanced detectors
+  private enhancedEyeDetector = new EnhancedEyeballDetector();
 
   constructor(
     private mediaPipeService: MediapipeService,
-    private gazeEstimationService: GazeEstimationService
-  ) { }
+    private gazeEstimationService: GazeEstimationService,
+    private faceTrackerService: FaceTrackerService,
+    private headPoseService: HeadPoseService,
+    private performanceService: PerformanceService,
+    private errorHandler: ErrorHandlerService
+  ) { 
+    // Initialize detectors with proper eye center models
+    this.initializeDetectors();
+  }
+
+  private initializeDetectors(): void {
+    // Set the eye centers for the detectors
+    this.leftDetector.eyeCenter = [...DEFAULT_LEFT_EYE_CENTER_MODEL];
+    this.rightDetector.eyeCenter = [...DEFAULT_RIGHT_EYE_CENTER_MODEL];
+  }
+
+  // Enhanced processing method
+  processFrameEnhanced(
+    videoElement: HTMLVideoElement,
+    timestamp: number
+  ): FrameProcessingResult {
+    
+    const startTime = performance.now();
+    
+    try {
+      // Get MediaPipe results
+      const mediaPipeResults = this.mediaPipeService.detectLandmarks(videoElement, timestamp);
+      
+      if (!mediaPipeResults || !mediaPipeResults.faceLandmarks || mediaPipeResults.faceLandmarks.length === 0) {
+        return this.createEmptyResult(performance.now() - startTime);
+      }
+      
+      const landmarks = mediaPipeResults.faceLandmarks[0];
+      const videoWidth = videoElement.videoWidth;
+      const videoHeight = videoElement.videoHeight;
+      
+      // Face tracking
+      const faceData = this.faceTrackerService.detectAndTrackFace(
+        mediaPipeResults, 
+        videoWidth, 
+        videoHeight, 
+        timestamp
+      );
+      
+      if (!faceData) {
+        this.errorHandler.logError('general', 'Face tracking failed', 'warning');
+        return this.createEmptyResult(performance.now() - startTime);
+      }
+      
+      // Head pose estimation
+      const headPose = this.headPoseService.estimateHeadPose(
+        landmarks, 
+        videoWidth, 
+        videoHeight, 
+        timestamp
+      );
+      
+      // Enhanced eye detection
+      const eyeRegions = this.enhancedEyeDetector.detectEyeRegions(
+        landmarks, 
+        videoWidth, 
+        videoHeight, 
+        timestamp
+      );
+      
+      // Check if head pose is suitable for gaze estimation
+      let predictedGaze: PointOfGaze | null = null;
+      if (headPose && this.headPoseService.isHeadPoseSuitableForGaze(headPose)) {
+        // Extract features for gaze estimation
+        const features = this.extractEnhancedFeatures(
+          landmarks, 
+          faceData, 
+          headPose, 
+          eyeRegions
+        );
+        
+        if (features && features.length > 0) {
+          // Get gaze prediction
+          const rawGaze = this.gazeEstimationService.predictGaze(features);
+          
+          if (rawGaze && headPose) {
+            // Apply head pose compensation
+            const compensatedGaze = this.headPoseService.compensateGazeForHeadPose(
+              { x: rawGaze.x, y: rawGaze.y }, 
+              headPose
+            );
+            
+            predictedGaze = {
+              x: compensatedGaze.x,
+              y: compensatedGaze.y
+            };
+          }
+        }
+      }
+      
+      // Calculate processing quality
+      const quality = this.calculateProcessingQuality(
+        faceData, 
+        headPose, 
+        eyeRegions, 
+        predictedGaze
+      );
+      
+      const processingTime = performance.now() - startTime;
+      
+      // Record performance metrics
+      this.performanceService.recordFrameMetrics({
+        frameProcessingTime: processingTime,
+        detectionTime: processingTime * 0.4, // Estimate
+        gazeEstimationTime: processingTime * 0.3, // Estimate
+        totalTime: processingTime
+      });
+      
+      return {
+        mediaPipeResults,
+        predictedGaze,
+        faceData,
+        headPose,
+        leftEyeRegion: eyeRegions.left,
+        rightEyeRegion: eyeRegions.right,
+        leftGazeVector: null, // Could be computed if needed
+        rightGazeVector: null, // Could be computed if needed
+        leftEyeballCenter: eyeRegions.left ? [eyeRegions.left.boundingBox.x, eyeRegions.left.boundingBox.y, 0] : null,
+        rightEyeballCenter: eyeRegions.right ? [eyeRegions.right.boundingBox.x, eyeRegions.right.boundingBox.y, 0] : null,
+        processingTime,
+        quality
+      };
+      
+    } catch (error) {
+      this.errorHandler.logError('general', `Frame processing error: ${error}`, 'error', error);
+      return this.createEmptyResult(performance.now() - startTime);
+    }
+  }
+
+  // Extract enhanced features from multiple sources
+  private extractEnhancedFeatures(
+    landmarks: NormalizedLandmark[],
+    faceData: FaceData,
+    headPose: HeadPose,
+    eyeRegions: { left: EyeRegion | null, right: EyeRegion | null }
+  ): number[] | null {
+    
+    const features: number[] = [];
+    
+    try {
+      // Basic landmark features
+      const mediaPipeResult = { faceLandmarks: [landmarks] } as FaceLandmarkerResult;
+      const basicFeatures = this._extractFeaturesFromResults(mediaPipeResult);
+      if (basicFeatures) {
+        features.push(...basicFeatures);
+      }
+      
+      // Head pose features
+      features.push(
+        headPose.roll / 180,    // Normalize to [-1, 1]
+        headPose.pitch / 180,   // Normalize to [-1, 1]
+        headPose.yaw / 180      // Normalize to [-1, 1]
+      );
+      
+      // Face quality features
+      features.push(
+        faceData.quality.overallScore,
+        faceData.quality.headPoseScore,
+        faceData.quality.averageVisibility
+      );
+      
+      // Eye region features
+      if (eyeRegions.left) {
+        features.push(
+          eyeRegions.left.eyeOpenness,
+          eyeRegions.left.quality.overall,
+          eyeRegions.left.pupilCenter?.x || 0,
+          eyeRegions.left.pupilCenter?.y || 0
+        );
+      } else {
+        features.push(0, 0, 0, 0); // Padding for missing left eye
+      }
+      
+      if (eyeRegions.right) {
+        features.push(
+          eyeRegions.right.eyeOpenness,
+          eyeRegions.right.quality.overall,
+          eyeRegions.right.pupilCenter?.x || 0,
+          eyeRegions.right.pupilCenter?.y || 0
+        );
+      } else {
+        features.push(0, 0, 0, 0); // Padding for missing right eye
+      }
+      
+      // Face stability features
+      const faceStability = this.faceTrackerService.getFaceStability();
+      if (faceStability) {
+        features.push(
+          faceStability.overallStability,
+          faceStability.positionStability,
+          faceStability.landmarkStability
+        );
+      } else {
+        features.push(0, 0, 0); // Padding for missing stability data
+      }
+      
+      return features.length > 0 ? features : null;
+      
+    } catch (error) {
+      this.errorHandler.logError('general', `Feature extraction error: ${error}`, 'warning', error);
+      return null;
+    }
+  }
+
+  // Calculate overall processing quality
+  private calculateProcessingQuality(
+    faceData: FaceData | null,
+    headPose: HeadPose | null,
+    eyeRegions: { left: EyeRegion | null, right: EyeRegion | null },
+    gaze: PointOfGaze | null
+  ): ProcessingQuality {
+    
+    const faceTracking = faceData ? faceData.quality.overallScore : 0;
+    
+    const eyeDetection = Math.max(
+      eyeRegions.left?.quality.overall || 0,
+      eyeRegions.right?.quality.overall || 0
+    );
+    
+    const headPoseQuality = headPose ? headPose.confidence : 0;
+    
+    const gazeEstimation = gaze ? 0.8 : 0; // Default confidence since PointOfGaze doesn't have confidence
+    
+    const overall = (faceTracking + eyeDetection + headPoseQuality + gazeEstimation) / 4;
+    
+    return {
+      faceTracking,
+      eyeDetection,
+      headPose: headPoseQuality,
+      gazeEstimation,
+      overall
+    };
+  }
+
+  // Create empty result for failed processing
+  private createEmptyResult(processingTime: number): FrameProcessingResult {
+    return {
+      mediaPipeResults: null,
+      predictedGaze: null,
+      faceData: null,
+      headPose: null,
+      leftEyeRegion: null,
+      rightEyeRegion: null,
+      leftGazeVector: null,
+      rightGazeVector: null,
+      leftEyeballCenter: null,
+      rightEyeballCenter: null,
+      processingTime,
+      quality: {
+        faceTracking: 0,
+        eyeDetection: 0,
+        headPose: 0,
+        gazeEstimation: 0,
+        overall: 0
+      }
+    };
+  }
 
   /**
    * ประมวลผลวิดีโอเฟรมเดียว

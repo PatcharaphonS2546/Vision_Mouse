@@ -1,5 +1,21 @@
-<h1>Gaze Control Application</h1>
-<app-video-source></app-video-source>
+<div class="app-container">
+  <!-- Navigation Header -->
+  <nav class="app-nav">
+    <div class="nav-content">
+      <h1>Vision Mouse</h1>
+      <div class="nav-buttons">
+        <button class="nav-btn" routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{exact: true}">
+          📊 Dashboard
+        </button>
+        <button class="nav-btn" routerLink="/test" routerLinkActive="active">
+          🎯 Eye Tracking Test
+        </button>
+      </div>
+    </div>
+  </nav>
 
-<app-gaze-tracker></app-gaze-tracker>
-<!-- <app-calibration></app-calibration> -->
+  <!-- Router Outlet for Dynamic Content -->
+  <main class="main-content">
+    <router-outlet></router-outlet>
+  </main>
+</div>

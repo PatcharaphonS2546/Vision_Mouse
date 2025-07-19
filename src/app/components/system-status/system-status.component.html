@@ -1,0 +1,160 @@
+<div class="system-status-container">
+  <!-- Overall System Status -->
+  <div class="status-overview">
+    <h3>System Status</h3>
+    <div class="overall-status" [ngClass]="getStatusColorClass(systemStatus?.overall || 'unknown')">
+      <span class="status-indicator"></span>
+      <span class="status-text">{{ systemStatus?.overall?.toUpperCase() || 'UNKNOWN' }}</span>
+    </div>
+  </div>
+
+  <!-- Component Status Grid -->
+  <div class="component-status-grid">
+    <!-- Camera Status -->
+    <div class="status-card">
+      <div class="status-header">
+        <h4>Camera</h4>
+        <span class="status-badge" [ngClass]="getStatusColorClass(systemStatus?.camera || 'unknown')">
+          {{ systemStatus?.camera?.toUpperCase() || 'UNKNOWN' }}
+        </span>
+      </div>
+      <div class="status-details">
+        <p>{{ getCameraStatusText() }}</p>
+        <div *ngIf="cameraQuality" class="quality-metrics">
+          <span class="metric">Resolution: {{ cameraQuality.resolution }}</span>
+          <span class="metric">FPS: {{ cameraQuality.frameRate }}</span>
+          <span class="metric">Lighting: {{ cameraQuality.lighting }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- MediaPipe Status -->
+    <div class="status-card">
+      <div class="status-header">
+        <h4>MediaPipe</h4>
+        <span class="status-badge" [ngClass]="getStatusColorClass(systemStatus?.mediapipe || 'unknown')">
+          {{ systemStatus?.mediapipe?.toUpperCase() || 'UNKNOWN' }}
+        </span>
+      </div>
+      <div class="status-details">
+        <p>{{ getMediaPipeStatusText() }}</p>
+      </div>
+    </div>
+
+    <!-- Gaze Estimation Status -->
+    <div class="status-card">
+      <div class="status-header">
+        <h4>Gaze Estimation</h4>
+        <span class="status-badge" [ngClass]="getStatusColorClass(systemStatus?.gazeEstimation || 'unknown')">
+          {{ systemStatus?.gazeEstimation?.toUpperCase() || 'UNKNOWN' }}
+        </span>
+      </div>
+      <div class="status-details">
+        <p>Model Status: {{ systemStatus?.gazeEstimation === 'ok' ? 'Ready' : 'Not Ready' }}</p>
+      </div>
+    </div>
+
+    <!-- Calibration Status -->
+    <div class="status-card">
+      <div class="status-header">
+        <h4>Calibration</h4>
+        <span class="status-badge" [ngClass]="getStatusColorClass(systemStatus?.calibration || 'unknown')">
+          {{ systemStatus?.calibration?.toUpperCase() || 'UNKNOWN' }}
+        </span>
+      </div>
+      <div class="status-details">
+        <p>Calibration: {{ systemStatus?.calibration === 'ok' ? 'Complete' : 'Required' }}</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Performance Metrics -->
+  <div class="performance-section" *ngIf="performance">
+    <div class="section-header">
+      <h3>Performance</h3>
+      <button class="toggle-btn" (click)="toggleAdvancedMetrics()">
+        {{ showAdvancedMetrics ? 'Hide' : 'Show' }} Details
+      </button>
+    </div>
+    
+    <div class="performance-overview">
+      <div class="performance-card" [ngClass]="getPerformanceLevelClass()">
+        <div class="metric-value">{{ performance.frameRate }}</div>
+        <div class="metric-label">FPS</div>
+      </div>
+      
+      <div class="performance-card">
+        <div class="metric-value">{{ performance.averageProcessingTime.toFixed(1) }}</div>
+        <div class="metric-label">ms/frame</div>
+      </div>
+      
+      <div class="performance-card" *ngIf="showAdvancedMetrics">
+        <div class="metric-value">{{ performance.memoryUsage }}</div>
+        <div class="metric-label">MB Memory</div>
+      </div>
+      
+      <div class="performance-card" *ngIf="showAdvancedMetrics">
+        <div class="metric-value">{{ performance.cpuUsage }}%</div>
+        <div class="metric-label">CPU Usage</div>
+      </div>
+    </div>
+
+    <div class="performance-status">
+      <span class="status-text" [ngClass]="getPerformanceLevelClass()">
+        Performance: {{ performance.status.toUpperCase() }}
+      </span>
+      <span class="gpu-status" [ngClass]="performance.gpuSupport ? 'gpu-enabled' : 'gpu-disabled'">
+        GPU: {{ performance.gpuSupport ? 'Enabled' : 'Disabled' }}
+      </span>
+    </div>
+  </div>
+
+  <!-- Error Summary -->
+  <div class="error-section" *ngIf="errors.length > 0">
+    <div class="section-header">
+      <h3>Errors & Warnings</h3>
+      <div class="error-actions">
+        <button class="action-btn" (click)="toggleErrorDetails()">
+          {{ showErrorDetails ? 'Hide' : 'Show' }} Details
+        </button>
+        <button class="action-btn clear-btn" (click)="clearResolvedErrors()">
+          Clear Resolved
+        </button>
+      </div>
+    </div>
+
+    <div class="error-summary">
+      <div class="error-count critical" *ngIf="getErrorCountByLevel('critical') > 0">
+        {{ getErrorCountByLevel('critical') }} Critical
+      </div>
+      <div class="error-count error" *ngIf="getErrorCountByLevel('error') > 0">
+        {{ getErrorCountByLevel('error') }} Errors
+      </div>
+      <div class="error-count warning" *ngIf="getErrorCountByLevel('warning') > 0">
+        {{ getErrorCountByLevel('warning') }} Warnings
+      </div>
+    </div>
+
+    <div class="error-details" *ngIf="showErrorDetails">
+      <div class="error-item" *ngFor="let error of getRecentErrors()" [ngClass]="'error-' + error.level">
+        <div class="error-header">
+          <span class="error-level">{{ error.level.toUpperCase() }}</span>
+          <span class="error-source">{{ error.source }}</span>
+          <span class="error-time">{{ formatTimestamp(error.timestamp) }}</span>
+        </div>
+        <div class="error-message">{{ error.message }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recommendations -->
+  <div class="recommendations-section">
+    <h3>Recommendations</h3>
+    <div class="recommendations-list">
+      <div class="recommendation-item" *ngFor="let recommendation of getRecommendations()">
+        <span class="recommendation-icon">💡</span>
+        <span class="recommendation-text">{{ recommendation }}</span>
+      </div>
+    </div>
+  </div>
+</div>

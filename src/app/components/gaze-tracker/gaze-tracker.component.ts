@@ -3,11 +3,16 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MediapipeService } from '../../services/mediapipe.service';
 import { CalibrationService, MIN_CALIBRATION_POINTS_FOR_TRAINING } from '../../services/calibration.service';
+import { EnhancedCalibrationService, CalibrationStatus } from '../../services/enhanced-calibration.service';
 import { GazeEstimationService, PointOfGaze} from '../../services/gaze-estimation.service';
+import { RealTimeProcessingService, RealTimeMetrics } from '../../services/real-time-processing.service';
 import { FaceLandmarkerResult, NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { CalibrationComponent } from '../calibration/calibration.component';
+import { EnhancedCalibrationComponent } from '../enhanced-calibration/enhanced-calibration.component';
+import { RealTimeMonitorComponent } from '../real-time-monitor/real-time-monitor.component';
 import { GazeProcessingService, FrameProcessingResult } from '../../services/gaze-processing.service';
 import { VisualizationOptions } from '../../services/visualization-options';
+import { Subscription } from 'rxjs';
 
 const LEFT_IRIS_INDICES = [473, 474, 475, 476, 477];
 const RIGHT_IRIS_INDICES = [468, 469, 470, 471, 472]
@@ -18,7 +23,8 @@ const RIGHT_IRIS_INDICES = [468, 469, 470, 471, 472]
   imports: [
       CommonModule,    // เพิ่ม CommonModule
       FormsModule,     // เพิ่ม FormsModule
-      CalibrationComponent
+      CalibrationComponent,
+      RealTimeMonitorComponent
     ],
   templateUrl: './gaze-tracker.component.html',
   styleUrls: ['./gaze-tracker.component.css']
@@ -38,6 +44,19 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
   esp32Url: string = 'http://192.168.78.193:81/stream'; // ตัวอย่าง URL ของ ESP32 WebSocket
   mjpegStreamUrl: string | null = null; // เปลี่ยนเป็น null เพื่อให้เคลียร์ src ได้ง่าย
   statusMessage: string = 'Initializing...';
+
+  // Real-time processing
+  realTimeMetrics: RealTimeMetrics = {
+    frameRate: 0,
+    averageLatency: 0,
+    droppedFrames: 0,
+    processingLoad: 0,
+    memoryUsage: 0,
+    queueLength: 0,
+    adaptiveQuality: 100
+  };
+  showRealTimeMonitor = false;
+  private metricsSubscription?: Subscription;
 
   // Video/Stream related
   private stream: MediaStream | null = null;
@@ -78,34 +97,26 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
 
         // ---- การเปลี่ยนแปลงเริ่มที่นี่ ----
 
-        // 1. (จำเป็นสำหรับ Service ปัจจุบัน) ต้องรัน MediaPipe ครั้งแรกเพื่อเอา Landmarks มาสกัด Feature
-        const initialMediaPipeResults = this.mediaPipeService.detectLandmarks(inputElementForMediaPipe, now);
-        this.storeLatestResults(initialMediaPipeResults); // เก็บผลลัพธ์นี้ไว้ใช้กับ Calibration
+        // 1. Use real-time processing system for optimal performance
+        const frameData = {
+          inputElement: inputElementForMediaPipe,
+          timestamp: now,
+          isCalibrating: this.isCalibrating,
+          isTrained: this.calibrationService.isCalibratedAndTrained()
+        };
 
-        // 2. สกัด Feature จากผลลัพธ์ล่าสุด
-        const currentFeatures = this.extractFeaturesFromResults(this.lastLandmarksResult);
-
-        // 3. กำหนดเงื่อนไขการทำนาย Gaze
-        const isGazePredictionEnabled = !this.isCalibrating && this.calibrationService.isCalibratedAndTrained();
-
-        // 4. เรียก GazeProcessingService (ซึ่งจะรัน MediaPipe อีกครั้ง และทำนาย Gaze ถ้าเงื่อนไขครบ)
-        // *** ส่ง Argument ให้ครบ 4 ตัว ***
-        const processingResult: FrameProcessingResult = this.gazeProcessingService.processFrame(
-            inputElementForMediaPipe,
-            isGazePredictionEnabled,
-            currentFeatures, // <--- ส่ง Features ที่สกัดได้
-            now              // <--- ส่ง Timestamp
-        );
-
-        // 5. ใช้ผลลัพธ์จาก GazeProcessingService
-        //    (mediaPipeResults ที่ได้จาก processingResult อาจจะซ้ำกับ initialMediaPipeResults
-        //     แต่เพื่อความสอดคล้อง ใช้ผลจาก Service ไปเลย)
-        // this.storeLatestResults(processingResult.mediaPipeResults); // อาจจะไม่ต้อง store ซ้ำ ถ้าไม่ต่าง
-
-        this.drawDebugInfo(inputElementForMediaPipe, processingResult.mediaPipeResults); // วาด Debug จากผลของ Service
-
-        if (processingResult.predictedGaze) {
-            this.updateGazeCursor(processingResult.predictedGaze); // อัปเดต Cursor จากผลของ Service
+        // Process frame through real-time processing system
+        const realTimeResult = await this.realTimeProcessingService.processFrame(frameData, 'high');
+        
+        if (realTimeResult) {
+          // Use optimized processing result
+          this.handleProcessingResult(realTimeResult);
+        } else {
+          // Fallback to traditional processing if real-time processing is overwhelmed
+          const processingResult = this.fallbackProcessing(inputElementForMediaPipe, now);
+          if (processingResult) {
+            this.handleProcessingResult(processingResult);
+          }
         }
 
        // ---- การเปลี่ยนแปลงสิ้นสุดที่นี่ ----
@@ -114,6 +125,45 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
          console.error("Error during prediction loop:", error);
     }
     this.requestNextFrame();
+  }
+
+  // Handle processing result from either real-time or fallback processing
+  private handleProcessingResult(result: any): void {
+    if (result.mediaPipeResults || result.faceDetected) {
+      // Update debug visualization
+      const inputElement = this.getVideoSourceElement();
+      if (inputElement && (inputElement instanceof HTMLVideoElement || inputElement instanceof HTMLCanvasElement)) {
+        this.drawDebugInfo(inputElement, result.mediaPipeResults || result);
+      }
+    }
+
+    if (result.predictedGaze || result.gaze) {
+      this.updateGazeCursor(result.predictedGaze || result.gaze);
+    }
+  }
+
+  // Fallback processing when real-time system is overwhelmed
+  private fallbackProcessing(inputElement: any, timestamp: number): FrameProcessingResult | null {
+    try {
+      // Traditional processing pipeline
+      const initialMediaPipeResults = this.mediaPipeService.detectLandmarks(inputElement, timestamp);
+      this.storeLatestResults(initialMediaPipeResults);
+
+      const currentFeatures = this.extractFeaturesFromResults(this.lastLandmarksResult);
+      const isGazePredictionEnabled = !this.isCalibrating && this.calibrationService.isCalibratedAndTrained();
+
+      const processingResult: FrameProcessingResult = this.gazeProcessingService.processFrame(
+        inputElement,
+        isGazePredictionEnabled,
+        currentFeatures,
+        timestamp
+      );
+
+      return processingResult;
+    } catch (error) {
+      console.error("Fallback processing failed:", error);
+      return null;
+    }
   }
 
   // Helper function to request the next frame
@@ -134,10 +184,14 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
   constructor(
     public mediaPipeService: MediapipeService, // public เพื่อให้ template เข้าถึง isInitialized ได้
     public calibrationService: CalibrationService,
+    public enhancedCalibrationService: EnhancedCalibrationService,
     public gazeEstimationService : GazeEstimationService,
     private gazeProcessingService: GazeProcessingService,
+    private realTimeProcessingService: RealTimeProcessingService,
     private ngZone: NgZone // ใช้เพื่อให้ requestAnimationFrame ทำงานนอก Zone ของ Angular ได้ (ประสิทธิภาพดีขึ้น)
-  ) { }
+  ) { 
+    this.setupRealTimeProcessing();
+  }
 
   async ngOnInit(): Promise<void> {
     this.statusMessage = 'Initializing MediaPipe...';
@@ -154,6 +208,23 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
   ngOnDestroy(): void {
     this.stopTracking();
     this.mediaPipeService.close();
+    
+    // Cleanup real-time processing
+    if (this.metricsSubscription) {
+      this.metricsSubscription.unsubscribe();
+    }
+    this.realTimeProcessingService.destroy();
+  }
+
+  // Setup real-time processing system
+  private setupRealTimeProcessing(): void {
+    // Subscribe to real-time metrics
+    this.metricsSubscription = this.realTimeProcessingService.getMetrics().subscribe(metrics => {
+      this.realTimeMetrics = metrics;
+    });
+
+    // Start real-time processing
+    this.realTimeProcessingService.start();
   }
 
   changeSource(): void {
@@ -477,9 +548,194 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
       }
   }
 
+  // --- Enhanced Calibration Methods (Phase 5) ---
+
+  // Start enhanced calibration with better UI and accuracy
+  async startEnhancedCalibration(): Promise<void> {
+    if (!this.isTracking) {
+      this.statusMessage = "Please start tracking first.";
+      return;
+    }
+    
+    if (!this.lastLandmarksResult || this.lastLandmarksResult.faceLandmarks.length === 0) {
+      this.statusMessage = "Cannot start calibration: Face not detected.";
+      return;
+    }
+
+    try {
+      // Clear both services for a fresh start
+      this.calibrationService.clearCalibration();
+      this.enhancedCalibrationService.clearCalibration();
+      
+      // Start enhanced calibration
+      const success = await this.enhancedCalibrationService.startCalibration(
+        window.innerWidth, 
+        window.innerHeight,
+        {
+          pointPattern: 'grid',
+          pointCount: 16,
+          samplesPerPoint: 3,
+          pointDisplayTime: 2000,
+          pointRadius: 20,
+          validationEnabled: true,
+          adaptiveThreshold: 0.8
+        }
+      );
+
+      if (success) {
+        this.isCalibrating = true;
+        this.statusMessage = 'Enhanced calibration started...';
+      } else {
+        this.statusMessage = 'Failed to start enhanced calibration.';
+      }
+
+    } catch (error) {
+      console.error('Error starting enhanced calibration:', error);
+      this.statusMessage = 'Error starting enhanced calibration.';
+    }
+  }
+
+  // Handle enhanced calibration point capture
+  async captureEnhancedCalibrationPoint(screenX: number, screenY: number): Promise<boolean> {
+    if (!this.isCalibrating) return false;
+
+    // Extract features from current face detection
+    const features = this.extractFeaturesFromResults(this.lastLandmarksResult);
+    
+    if (!features) {
+      console.warn('Cannot capture calibration point: No features extracted');
+      return false;
+    }
+
+    // Add point to enhanced calibration service
+    const success = await this.enhancedCalibrationService.addCalibrationPoint(
+      screenX,
+      screenY,
+      features,
+      window.innerWidth,
+      window.innerHeight,
+      this.getEnhancedFaceQuality()
+    );
+
+    if (success) {
+      this.statusMessage = `Calibration point captured successfully`;
+    } else {
+      this.statusMessage = `Calibration point rejected - low quality`;
+    }
+
+    return success;
+  }
+
+  // Complete enhanced calibration
+  async completeEnhancedCalibration(): Promise<void> {
+    try {
+      const success = await this.enhancedCalibrationService.completeCalibration();
+      
+      if (success) {
+        this.isCalibrating = false;
+        this.statusMessage = 'Enhanced calibration completed successfully!';
+        
+        // Subscribe to accuracy updates
+        this.enhancedCalibrationService.getCalibrationAccuracy().subscribe(accuracy => {
+          if (accuracy) {
+            console.log(`Calibration Accuracy: ${(accuracy.accuracy * 100).toFixed(1)}%`);
+            console.log(`Average Error: ${accuracy.averageError.toFixed(1)}px`);
+            this.statusMessage = `Calibration complete - Accuracy: ${(accuracy.accuracy * 100).toFixed(1)}%`;
+          }
+        });
+
+      } else {
+        this.statusMessage = 'Enhanced calibration failed. Please try again.';
+        this.isCalibrating = false;
+      }
+
+    } catch (error) {
+      console.error('Error completing enhanced calibration:', error);
+      this.statusMessage = 'Error completing calibration.';
+      this.isCalibrating = false;
+    }
+  }
+
+  // Cancel enhanced calibration
+  cancelEnhancedCalibration(): void {
+    this.enhancedCalibrationService.cancelCalibration();
+    this.isCalibrating = false;
+    this.statusMessage = 'Enhanced calibration cancelled.';
+  }
+
+  // Handle enhanced calibration events
+  onEnhancedCalibrationComplete(success: boolean): void {
+    if (success) {
+      this.completeEnhancedCalibration();
+    } else {
+      this.cancelEnhancedCalibration();
+    }
+  }
+
+  onEnhancedCalibrationCancelled(): void {
+    this.cancelEnhancedCalibration();
+  }
+
+  // Get enhanced face quality metrics for calibration
+  private getEnhancedFaceQuality(): any {
+    if (!this.lastLandmarksResult) return null;
+
+    // Basic quality assessment based on landmark availability and positions
+    const landmarks = this.lastLandmarksResult.faceLandmarks[0];
+    if (!landmarks || landmarks.length < 478) return null;
+
+    // Calculate face stability (simplified)
+    const stability = this.calculateFaceStability(landmarks);
+    
+    return {
+      faceDetected: true,
+      landmarkCount: landmarks.length,
+      stability: stability,
+      confidence: 0.8 // Default confidence
+    };
+  }
+
+  // Calculate face stability for calibration quality
+  private calculateFaceStability(landmarks: NormalizedLandmark[]): number {
+    // Simple stability calculation based on landmark positions
+    // In a real implementation, this would compare with previous frames
+    
+    if (!landmarks || landmarks.length < 10) return 0;
+
+    // Check if key landmarks are present and have reasonable positions
+    const keyLandmarks = [10, 151, 9, 175]; // Nose and face outline points
+    let validLandmarks = 0;
+
+    for (const index of keyLandmarks) {
+      const landmark = landmarks[index];
+      if (landmark && 
+          landmark.x >= 0 && landmark.x <= 1 && 
+          landmark.y >= 0 && landmark.y <= 1) {
+        validLandmarks++;
+      }
+    }
+
+    return validLandmarks / keyLandmarks.length;
+  }
+
+  // Check if enhanced calibration is available
+  isEnhancedCalibrationAvailable(): boolean {
+    return this.enhancedCalibrationService.isCalibrated();
+  }
+
+  // Get enhanced calibration status
+  getEnhancedCalibrationStatus(): string {
+    // Subscribe to status changes and return current status
+    let status = 'idle';
+    this.enhancedCalibrationService.getCalibrationStatus().subscribe(s => status = s);
+    return status;
+  }
+
+  // --- End Enhanced Calibration Methods ---
+
   // --- Helper Functions ---
 
-  private prepareInputForMediaPipeSync(sourceElement: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement): HTMLVideoElement | HTMLCanvasElement | null { /* ...โค้ดเดิม... */
+  private prepareInputForMediaPipeSync(sourceElement: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement): HTMLVideoElement | HTMLCanvasElement | null {
        if (this.selectedSource === 'esp32-mjpeg' && sourceElement instanceof HTMLImageElement) {
            if (!this.hiddenMjpegCanvas) {
                 this.hiddenMjpegCanvas = document.createElement('canvas');
@@ -505,7 +761,7 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
        return null; // Unsupported type or not ready
    }
 
-  private storeLatestResults(results: FaceLandmarkerResult | undefined | null): void { /* ...โค้ดเดิม... */
+  private storeLatestResults(results: FaceLandmarkerResult | undefined | null): void {
       try {
           this.lastLandmarksResult = results ? structuredClone(results) : null;
       } catch (e) {

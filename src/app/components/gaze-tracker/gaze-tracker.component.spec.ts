@@ -8,7 +8,7 @@ describe('GazeTrackerComponent', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      declarations: [GazeTrackerComponent]
+      imports: [GazeTrackerComponent]
     })
     .compileComponents();
 

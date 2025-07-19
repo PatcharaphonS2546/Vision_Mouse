@@ -51,27 +51,57 @@ export class GazeEstimationService {
       return;
     }
 
+    // Validate and clean data
+    const cleanFeatures: number[][] = [];
+    const cleanTargetsX: number[] = [];
+    const cleanTargetsY: number[] = [];
+
+    for (let i = 0; i < features.length; i++) {
+      const feature = features[i];
+      const targetX = targetsX[i];
+      const targetY = targetsY[i];
+
+      // Validate feature array
+      if (!Array.isArray(feature) || feature.length !== 10) {
+        console.warn(`Skipping invalid feature at index ${i}: expected array of length 10, got:`, feature);
+        continue;
+      }
+
+      // Validate all numbers in feature
+      const cleanFeature = feature.map(val => {
+        const num = Number(val);
+        return isNaN(num) || !isFinite(num) ? 0 : num;
+      });
+
+      // Validate targets
+      const cleanX = isNaN(Number(targetX)) || !isFinite(Number(targetX)) ? 0 : Number(targetX);
+      const cleanY = isNaN(Number(targetY)) || !isFinite(Number(targetY)) ? 0 : Number(targetY);
+
+      cleanFeatures.push(cleanFeature);
+      cleanTargetsX.push(cleanX);
+      cleanTargetsY.push(cleanY);
+    }
+
+    console.log('Cleaned training data:', { 
+      features: cleanFeatures.length, 
+      sampleFeature: cleanFeatures[0],
+      sampleTargets: [cleanTargetsX[0], cleanTargetsY[0]]
+    });
+
+    if (cleanFeatures.length < MIN_CALIBRATION_POINTS) {
+      console.warn(`Insufficient clean data for training. Need at least ${MIN_CALIBRATION_POINTS}, got ${cleanFeatures.length}.`);
+      return;
+    }
+
     // Prepare data for multivariate regression
-    // X: NxM (N samples, M features), Y: Nx2 ([x, y] targets)
-    // ตรวจสอบว่า features ทุกแถวมีขนาดเท่ากัน
-    const featureLength = features[0]?.length || 0;
-    if (!features.every(f => f.length === featureLength)) {
-      console.error('Training aborted: Not all feature vectors have the same length.', features.map(f => f.length));
-      return;
-    }
-    // Expect 10 features for training
-    if (featureLength !== 10) {
-      console.warn(`Training aborted: Feature vector length mismatch. Expected 10, got ${featureLength}`);
-      return;
-    }
-    const X = features;
-    const Y = features.map((_, i) => [targetsX[i], targetsY[i]]);
+    const X = cleanFeatures;
+    const Y = cleanFeatures.map((_, i) => [cleanTargetsX[i], cleanTargetsY[i]]);
 
     try {
       const mlr = new MLR(X, Y);
       this.gazeModel.model = mlr;
       this.isTrained = true;
-      console.log('Multivariate regression model trained.');
+      console.log('Multivariate regression model trained successfully with', cleanFeatures.length, 'samples.');
     } catch (e) {
       console.error('Failed to train multivariate regression model:', e);
       this.resetModel();

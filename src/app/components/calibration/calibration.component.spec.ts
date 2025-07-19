@@ -8,7 +8,7 @@ describe('CalibrationComponent', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      declarations: [CalibrationComponent]
+      imports: [CalibrationComponent]
     })
     .compileComponents();
 
