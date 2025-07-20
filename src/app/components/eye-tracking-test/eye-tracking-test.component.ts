@@ -188,6 +188,9 @@ export class EyeTrackingTestComponent implements OnInit, OnDestroy {
     this.destroy$.next();
     this.destroy$.complete();
     this.stopCamera();
+    
+    // Cleanup MediaPipe service
+    this.mediapipeService.cleanup();
   }
 
   private async initializeServices() {
@@ -210,59 +213,53 @@ export class EyeTrackingTestComponent implements OnInit, OnDestroy {
 
   private setupMediaPipeProcessing() {
     // Process video frames with real MediaPipe face detection
-    const processFrame = () => {
-      if (this.isStreaming && this.videoElement?.nativeElement && this.mediapipeService.isInitialized) {
-        const video = this.videoElement.nativeElement;
-        
-        if (video.readyState >= 2) { // Video is ready
-          try {
-            // Use MediaPipe service for real face landmark detection
-            const timestamp = Date.now();
-            const results = this.mediapipeService.detectLandmarks(video, timestamp);
-            
-            if (results && results.faceLandmarks && results.faceLandmarks.length > 0) {
-              // Store real MediaPipe face landmarks
-              this.currentFaceLandmarks = results.faceLandmarks[0];
-              this.lastDetectionTime = Date.now();
-              this.realFaceDetected = true;
-              this.detectionConfidence = 0.9; // MediaPipe detected face
-              this.faceDetected = true;
-            } else {
-              // No face detected by MediaPipe
-              this.realFaceDetected = false;
-              this.detectionConfidence = 0;
-              this.faceDetected = false;
+    interval(33) // ~30 FPS processing
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(() => {
+        if (this.isStreaming && this.videoElement?.nativeElement && this.mediapipeService.isInitialized) {
+          const video = this.videoElement.nativeElement;
+          
+          if (video.readyState >= 2) { // Video is ready
+            try {
+              // Use MediaPipe service for real face landmark detection
+              const timestamp = Date.now();
+              const results = this.mediapipeService.detectLandmarks(video, timestamp);
+              
+              if (results && results.faceLandmarks && results.faceLandmarks.length > 0) {
+                // Store real MediaPipe face landmarks
+                this.currentFaceLandmarks = results.faceLandmarks[0];
+                this.lastDetectionTime = Date.now();
+                this.realFaceDetected = true;
+                this.detectionConfidence = 0.9; // MediaPipe detected face
+                this.faceDetected = true;
+              } else {
+                // No face detected by MediaPipe
+                this.realFaceDetected = false;
+                this.detectionConfidence = 0;
+                this.faceDetected = false;
+              }
+            } catch (error: any) {
+              console.warn('MediaPipe processing error:', error);
+              // Basic fallback detection
+              if (video.videoWidth > 0 && video.videoHeight > 0) {
+                this.realFaceDetected = false; // No real MediaPipe data
+                this.faceDetected = false; // Changed to false to be more accurate
+                this.detectionConfidence = 0;
+                this.currentFaceLandmarks = this.generateBasicEyeData();
+              } else {
+                this.realFaceDetected = false;
+                this.faceDetected = false;
+                this.detectionConfidence = 0;
+              }
             }
-          } catch (error: any) {
-            console.warn('MediaPipe processing error:', error);
-            // Basic fallback detection
-            if (video.videoWidth > 0 && video.videoHeight > 0) {
-              this.realFaceDetected = false; // No real MediaPipe data
-              this.faceDetected = true;
-              this.detectionConfidence = 0.2; // Very low confidence
-              this.currentFaceLandmarks = this.generateBasicEyeData();
-            } else {
-              this.realFaceDetected = false;
-              this.faceDetected = false;
-              this.detectionConfidence = 0;
-            }
+          } else {
+            // Video not ready - no detection
+            this.realFaceDetected = false;
+            this.faceDetected = false;
+            this.detectionConfidence = 0;
           }
-        } else {
-          // Video not ready - no detection
-          this.realFaceDetected = false;
-          this.faceDetected = false;
-          this.detectionConfidence = 0;
         }
-      }
-      
-      // Continue processing
-      if (this.isStreaming && !this.isDestroyed) {
-        requestAnimationFrame(processFrame);
-      }
-    };
-    
-    // Start processing when camera starts
-    processFrame();
+      });
   }
 
   private generateBasicEyeData(): any[] {
@@ -298,8 +295,15 @@ export class EyeTrackingTestComponent implements OnInit, OnDestroy {
     interval(100) // Check every 100ms
       .pipe(takeUntil(this.destroy$))
       .subscribe(() => {
-        // Simple check for face detection
-        this.faceDetected = this.mediapipeService.isInitialized;
+        // Check for face detection only if camera is streaming AND MediaPipe is ready
+        if (this.isStreaming && this.mediapipeService.isInitialized) {
+          // Face detection status is updated by the MediaPipe processing loop
+          // No need to change it here, just ensure it's reset when conditions aren't met
+        } else {
+          // No camera or MediaPipe not ready = no face detection
+          this.faceDetected = false;
+          this.realFaceDetected = false;
+        }
       });
   }
 
@@ -341,6 +345,13 @@ export class EyeTrackingTestComponent implements OnInit, OnDestroy {
     this.videoService.stopCamera();
     this.isStreaming = false;
     this.faceDetected = false;
+    this.realFaceDetected = false;
+    this.detectionConfidence = 0;
+    this.currentFaceLandmarks = [];
+    
+    // Cleanup MediaPipe adaptive optimization
+    this.mediapipeService.cleanup();
+    
     console.log('Camera stopped');
   }
 

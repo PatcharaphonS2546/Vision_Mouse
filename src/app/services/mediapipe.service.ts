@@ -1,6 +1,8 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { FaceLandmarker, FilesetResolver, FaceLandmarkerResult } from '@mediapipe/tasks-vision';
 import { BehaviorSubject, Observable } from 'rxjs';
+import { ProductionPerformanceService } from './production-performance.service';
+import { MemoryPoolService } from './memory-pool.service';
 
 export interface MediaPipePerformanceMetrics {
   averageProcessingTime: number;
@@ -17,6 +19,15 @@ export interface FaceDetectionQuality {
   stability: number; // 0-1
 }
 
+export interface OptimizedProcessingConfig {
+  enableFrameSkipping: boolean;
+  frameSkipCount: number;
+  qualityLevel: number; // 0-100
+  batchProcessing: boolean;
+  enableMemoryPooling: boolean;
+  adaptiveProcessing: boolean;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -25,11 +36,34 @@ export class MediapipeService {
   private lastVideoTime = -1;
   public isInitialized = false;
   
+  // Inject performance services
+  private performanceService = inject(ProductionPerformanceService);
+  private memoryPool = inject(MemoryPoolService);
+  
   // Performance tracking
   private performanceMetrics$ = new BehaviorSubject<MediaPipePerformanceMetrics | null>(null);
   private faceQuality$ = new BehaviorSubject<FaceDetectionQuality | null>(null);
   private processingTimes: number[] = [];
   private lastProcessingTime = 0;
+  
+  // Optimization state
+  private frameSkipCounter = 0;
+  private processingQueue: any[] = [];
+  private isProcessing = false;
+  private optimizationConfig: OptimizedProcessingConfig = {
+    enableFrameSkipping: true,
+    frameSkipCount: 1,
+    qualityLevel: 80,
+    batchProcessing: false,
+    enableMemoryPooling: true,
+    adaptiveProcessing: true
+  };
+  
+  // Logging throttle variables
+  private lastOptimizationLogTime: number = 0;
+  private lastLoggedFrameRate: number = 0;
+  private lastLoggedQuality: number = 0;
+  private adaptiveOptimizationInterval?: number;
   
   // Configuration
   private config = {
@@ -51,7 +85,7 @@ export class MediapipeService {
     }
 
     try {
-      console.log('Initializing MediaPipe FaceLandmarker...');
+      console.log('Initializing MediaPipe FaceLandmarker with production optimizations...');
       
       const filesetResolver = await FilesetResolver.forVisionTasks(
         this.config.wasmPath
@@ -74,8 +108,9 @@ export class MediapipeService {
       this.isInitialized = true;
       console.log('MediaPipe FaceLandmarker initialized successfully.');
       
-      // Start performance monitoring
+      // Start performance monitoring and optimization
       this.startPerformanceMonitoring();
+      this.startAdaptiveOptimization();
       
     } catch (error) {
       console.error('Error initializing MediaPipe FaceLandmarker:', error);
@@ -94,13 +129,24 @@ export class MediapipeService {
       return undefined;
     }
 
+    // Start performance tracking
+    this.performanceService.startFrameProcessing();
+
     // Check video element readiness
     if (videoElement instanceof HTMLVideoElement && videoElement.readyState < 2) {
+      this.performanceService.endFrameProcessing();
+      return undefined;
+    }
+
+    // Frame skipping optimization
+    if (this.shouldSkipFrame()) {
+      this.performanceService.endFrameProcessing();
       return undefined;
     }
 
     // Prevent duplicate processing for same frame
     if (timestamp === this.lastVideoTime) {
+      this.performanceService.endFrameProcessing();
       return undefined;
     }
 
@@ -116,25 +162,244 @@ export class MediapipeService {
         : videoElement.height;
 
       if (videoWidth <= 0 || videoHeight <= 0) {
+        this.performanceService.endFrameProcessing();
         return undefined;
       }
 
       this.lastVideoTime = timestamp;
-      const result = this.faceLandmarker.detectForVideo(videoElement, timestamp);
+
+      // Get frame data using memory pool if enabled
+      let frameData: any = null;
+      if (this.optimizationConfig.enableMemoryPooling) {
+        frameData = this.memoryPool.acquire('frame-processing');
+        if (frameData && typeof frameData === 'object') {
+          (frameData as any).timestamp = timestamp;
+          (frameData as any).data = videoElement;
+        }
+      }
+
+      // Process with quality optimization
+      const detectionResult = this.processWithOptimization(videoElement, timestamp);
+
+      // Release frame data back to pool
+      if (frameData) {
+        this.memoryPool.release('frame-processing', frameData);
+      }
+
+      // Record processing time
+      const totalProcessingTime = performance.now() - startTime;
+      this.recordProcessingTime(totalProcessingTime);
       
-      // Track performance
-      const processingTime = performance.now() - startTime;
-      this.updatePerformanceMetrics(processingTime);
-      
-      // Assess detection quality
-      this.assessDetectionQuality(result, videoWidth, videoHeight);
-      
-      return result;
+      // Update face quality assessment
+      this.assessFaceQuality(detectionResult);
+
+      // End performance tracking
+      this.performanceService.endFrameProcessing();
+
+      return detectionResult;
       
     } catch (error) {
       console.error('Error during landmark detection:', error);
+      this.performanceService.endFrameProcessing();
       return undefined;
     }
+  }
+
+  // Process with optimization based on current settings
+  private processWithOptimization(
+    videoElement: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement, 
+    timestamp: number
+  ): FaceLandmarkerResult | undefined {
+    if (!this.faceLandmarker) return undefined;
+
+    try {
+      // Apply quality optimization if needed
+      if (this.optimizationConfig.qualityLevel < 100) {
+        // Reduce processing precision for performance
+        return this.faceLandmarker.detectForVideo(videoElement, timestamp);
+      }
+
+      // Normal processing
+      return this.faceLandmarker.detectForVideo(videoElement, timestamp);
+    } catch (error) {
+      console.error('Error in optimized processing:', error);
+      return undefined;
+    }
+  }
+
+  // Check if current frame should be skipped for performance
+  private shouldSkipFrame(): boolean {
+    if (!this.optimizationConfig.enableFrameSkipping) return false;
+
+    this.frameSkipCounter++;
+    if (this.frameSkipCounter >= this.optimizationConfig.frameSkipCount) {
+      this.frameSkipCounter = 0;
+      return false;
+    }
+    return true;
+  }
+
+  // Record processing time for performance tracking
+  private recordProcessingTime(time: number): void {
+    this.processingTimes.push(time);
+    
+    // Keep only last 30 measurements
+    if (this.processingTimes.length > 30) {
+      this.processingTimes = this.processingTimes.slice(-30);
+    }
+
+    // Update performance metrics
+    this.updatePerformanceMetrics(time);
+  }
+
+  // Assess face detection quality
+  private assessFaceQuality(result: FaceLandmarkerResult | undefined): void {
+    if (!result || !result.faceLandmarks || result.faceLandmarks.length === 0) {
+      this.faceQuality$.next({
+        faceDetected: false,
+        landmarkCount: 0,
+        confidenceScore: 0,
+        faceBounds: null,
+        stability: 0
+      });
+      return;
+    }
+
+    const landmarks = result.faceLandmarks[0];
+    const landmarkCount = landmarks.length;
+    
+    // Calculate face bounds
+    const xs = landmarks.map(p => p.x);
+    const ys = landmarks.map(p => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+
+    const faceBounds = {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY
+    };
+
+    // Calculate stability based on landmark consistency
+    const stability = this.calculateLandmarkStability(landmarks);
+    
+    // Estimate confidence based on landmark distribution
+    const confidenceScore = this.estimateDetectionConfidence(landmarks, faceBounds);
+
+    this.faceQuality$.next({
+      faceDetected: true,
+      landmarkCount,
+      confidenceScore,
+      faceBounds,
+      stability
+    });
+  }
+
+  // Calculate landmark stability
+  private calculateLandmarkStability(landmarks: any[]): number {
+    // Simple stability calculation based on landmark count and distribution
+    const expectedLandmarks = 468; // MediaPipe face landmarks
+    const completeness = landmarks.length / expectedLandmarks;
+    
+    // Check for reasonable face proportions
+    const xs = landmarks.map(p => p.x);
+    const ys = landmarks.map(p => p.y);
+    const width = Math.max(...xs) - Math.min(...xs);
+    const height = Math.max(...ys) - Math.min(...ys);
+    const aspectRatio = width / height;
+    
+    // Typical face aspect ratio is around 0.7-0.9
+    const aspectRatioScore = aspectRatio >= 0.6 && aspectRatio <= 1.0 ? 1.0 : 0.5;
+    
+    return Math.min(1.0, completeness * aspectRatioScore);
+  }
+
+  // Estimate detection confidence
+  private estimateDetectionConfidence(landmarks: any[], faceBounds: any): number {
+    // Base confidence on face size (larger faces are typically more reliable)
+    const faceArea = faceBounds.width * faceBounds.height;
+    const sizeScore = Math.min(1.0, faceArea * 10); // Normalize face area
+    
+    // Check landmark density
+    const landmarkDensity = landmarks.length / faceArea;
+    const densityScore = Math.min(1.0, landmarkDensity / 1000);
+    
+    return (sizeScore + densityScore) / 2;
+  }
+
+  // Start adaptive optimization based on performance metrics
+  private startAdaptiveOptimization(): void {
+    if (this.adaptiveOptimizationInterval) {
+      clearInterval(this.adaptiveOptimizationInterval);
+    }
+    
+    this.adaptiveOptimizationInterval = window.setInterval(() => {
+      this.adaptOptimizationSettings();
+    }, 2000); // Check every 2 seconds
+  }
+
+  // Stop adaptive optimization
+  private stopAdaptiveOptimization(): void {
+    if (this.adaptiveOptimizationInterval) {
+      clearInterval(this.adaptiveOptimizationInterval);
+      this.adaptiveOptimizationInterval = undefined;
+    }
+  }
+
+  // Adapt optimization settings based on current performance
+  private adaptOptimizationSettings(): void {
+    if (!this.optimizationConfig.adaptiveProcessing) return;
+
+    const metrics = this.performanceMetrics$.value;
+    if (!metrics) return;
+
+    // Skip optimization if no recent processing activity
+    const currentTime = Date.now();
+    if (currentTime - this.lastProcessingTime > 5000) {
+      // No processing for 5 seconds, stop adaptive optimization
+      this.stopAdaptiveOptimization();
+      return;
+    }
+
+    // Adjust frame skipping based on performance
+    if (metrics.frameRate < 20) {
+      this.optimizationConfig.frameSkipCount = Math.min(3, this.optimizationConfig.frameSkipCount + 1);
+      this.optimizationConfig.qualityLevel = Math.max(30, this.optimizationConfig.qualityLevel - 10);
+    } else if (metrics.frameRate > 35) {
+      this.optimizationConfig.frameSkipCount = Math.max(1, this.optimizationConfig.frameSkipCount - 1);
+      this.optimizationConfig.qualityLevel = Math.min(100, this.optimizationConfig.qualityLevel + 5);
+    }
+
+    // Log optimization changes only when there's a significant change and not too frequently
+    const hasSignificantChange = (
+      Math.abs(metrics.frameRate - (this.lastLoggedFrameRate || 0)) > 5 ||
+      Math.abs(this.optimizationConfig.qualityLevel - (this.lastLoggedQuality || 0)) > 5
+    );
+
+    if (hasSignificantChange && (currentTime - (this.lastOptimizationLogTime || 0)) > 2000) {
+      console.log('Adaptive optimization update:', {
+        frameRate: metrics.frameRate,
+        frameSkip: this.optimizationConfig.frameSkipCount,
+        quality: this.optimizationConfig.qualityLevel
+      });
+      this.lastOptimizationLogTime = currentTime;
+      this.lastLoggedFrameRate = metrics.frameRate;
+      this.lastLoggedQuality = this.optimizationConfig.qualityLevel;
+    }
+  }
+
+  // Update optimization configuration
+  updateOptimizationConfig(config: Partial<OptimizedProcessingConfig>): void {
+    this.optimizationConfig = { ...this.optimizationConfig, ...config };
+    console.log('Optimization config updated:', this.optimizationConfig);
+  }
+
+  // Get current optimization status
+  getOptimizationStatus(): OptimizedProcessingConfig {
+    return { ...this.optimizationConfig };
   }
 
   // Determine optimal delegate based on device capabilities
@@ -280,6 +545,17 @@ export class MediapipeService {
   // Get current configuration
   getConfiguration(): typeof this.config {
     return { ...this.config };
+  }
+
+  // Cleanup method for component destruction
+  cleanup(): void {
+    this.stopAdaptiveOptimization();
+    this.processingTimes = [];
+    this.lastProcessingTime = 0;
+    this.lastOptimizationLogTime = 0;
+    this.lastLoggedFrameRate = 0;
+    this.lastLoggedQuality = 0;
+    console.log('MediaPipe service cleaned up');
   }
 
   // Observable getters

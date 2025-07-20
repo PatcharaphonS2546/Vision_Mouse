@@ -321,6 +321,9 @@ export class GazeTrackerComponent implements OnInit, OnDestroy { // Implement On
     this.closeWebSocket();
     this.stopMjpegStream(); // <--- เรียก stopMjpegStream
 
+    // Cleanup MediaPipe adaptive optimization
+    this.mediaPipeService.cleanup();
+
     this.isCalibrating = false; // หยุด Calibrate ถ้ากำลังทำอยู่
     this.statusMessage = 'Tracking stopped.';
     this.gazeEstimationService.resetSmoothing(); // Reset smoothing history
