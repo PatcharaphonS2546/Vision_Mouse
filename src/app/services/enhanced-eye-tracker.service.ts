@@ -2,7 +2,9 @@ import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import { MediapipeService } from './mediapipe.service';
 import { AdvancedGazeCalculationService, GazeCalculationResult } from './advanced-gaze-calculation.service';
+import { MouseSmoothingService } from './mouse-smoothing.service';
 import { FaceLandmarkerResult, NormalizedLandmark } from '@mediapipe/tasks-vision';
+import { PointOfGaze } from './gaze-estimation.service';
 
 export interface EyeRegion {
   landmarks: NormalizedLandmark[];
@@ -89,7 +91,8 @@ export class EnhancedEyeTrackerService {
 
   constructor(
     private mediapipeService: MediapipeService,
-    private gazeCalculationService: AdvancedGazeCalculationService
+    private gazeCalculationService: AdvancedGazeCalculationService,
+    private mouseSmoothingService: MouseSmoothingService
   ) {
     this.initializeAutoLightDetection();
   }
@@ -548,17 +551,63 @@ export class EnhancedEyeTrackerService {
   }
 
   /**
-   * Calculate advanced gaze point using dedicated service
+   * Calculate advanced gaze point using dedicated service with mouse smoothing
    */
   private calculateAdvancedGaze(eyeTrackingData: EyeTrackingData): void {
     try {
       const gazeResult = this.gazeCalculationService.calculateGazePoint(eyeTrackingData);
-      if (gazeResult) {
-        console.log('Advanced gaze calculated:', gazeResult);
+      if (gazeResult && gazeResult.gazePoint) {
+        // Apply mouse smoothing to the gaze point
+        const smoothedGaze = this.mouseSmoothingService.smoothMouseMovement({
+          x: gazeResult.gazePoint.x,
+          y: gazeResult.gazePoint.y,
+          timestamp: eyeTrackingData.timestamp,
+          confidence: gazeResult.confidence
+        });
+
+        // Log both original and smoothed positions
+        console.log('🎯 Gaze prediction:', {
+          raw: gazeResult.gazePoint,
+          smoothed: smoothedGaze,
+          confidence: gazeResult.confidence
+        });
+
+        // You can emit the smoothed gaze point or use it for mouse movement
+        // For example: this.moveMouseToPosition(smoothedGaze);
       }
     } catch (error) {
       console.error('Error calculating advanced gaze:', error);
     }
+  }
+
+  /**
+   * Apply smoothed gaze point to mouse cursor (example implementation)
+   */
+  private moveMouseToPosition(gazePoint: PointOfGaze): void {
+    // This would typically interface with a mouse control system
+    // For now, we'll just log the movement
+    console.log(`🖱️ Moving mouse to: (${gazePoint.x.toFixed(1)}, ${gazePoint.y.toFixed(1)})`);
+  }
+
+  /**
+   * Configure mouse smoothing parameters
+   */
+  configureMouseSmoothing(config: any): void {
+    this.mouseSmoothingService.configureMouseSmoothing(config);
+  }
+
+  /**
+   * Get mouse smoothing statistics
+   */
+  getMouseSmoothingStats(): any {
+    return this.mouseSmoothingService.getStats();
+  }
+
+  /**
+   * Get mouse smoothing recommendations
+   */
+  getMouseSmoothingRecommendations(): string[] {
+    return this.mouseSmoothingService.getRecommendations();
   }
 
   /**

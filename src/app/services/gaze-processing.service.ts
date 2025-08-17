@@ -419,7 +419,21 @@ export class GazeProcessingService {
 
     // 3. Call Gaze Prediction (if enabled and features extracted)
     if (isGazePredictionEnabled && currentFeatures && currentFeatures.length > 0) {
-      predictedGaze = this.gazeEstimationService.predictGaze(currentFeatures);
+      const rawGaze = this.gazeEstimationService.predictGaze(currentFeatures);
+      
+      if (rawGaze) {
+        // Convert normalized coordinates (0-1) back to screen coordinates
+        predictedGaze = {
+          x: rawGaze.x * window.innerWidth,
+          y: rawGaze.y * window.innerHeight
+        };
+        
+        console.debug('Gaze prediction:', {
+          normalized: rawGaze,
+          screen: predictedGaze,
+          screenSize: { width: window.innerWidth, height: window.innerHeight }
+        });
+      }
     }
 
     // 4. Return combined results (add gazePipelineResult for downstream use)

@@ -7,6 +7,40 @@ import MLR from 'ml-regression-multivariate-linear';
 export interface PointOfGaze {
   x: number;
   y: number;
+  timestamp?: number;
+  confidence?: number;
+}
+
+// Enhanced smoothing configuration
+export interface SmoothingConfig {
+  enableKalmanFilter: boolean;
+  enableExponentialSmoothing: boolean;
+  enableOutlierDetection: boolean;
+  kalmanProcessNoise: number;
+  kalmanMeasurementNoise: number;
+  exponentialAlpha: number;
+  outlierThreshold: number;
+  smoothingWindowSize: number;
+  minConfidenceThreshold: number;
+}
+
+// Kalman filter state for 2D tracking
+interface KalmanState2D {
+  x: number;    // Position X
+  y: number;    // Position Y
+  vx: number;   // Velocity X
+  vy: number;   // Velocity Y
+  px: number;   // Covariance X
+  py: number;   // Covariance Y
+  pvx: number;  // Velocity covariance X
+  pvy: number;  // Velocity covariance Y
+}
+
+// Outlier detection result
+interface OutlierDetectionResult {
+  isOutlier: boolean;
+  confidence: number;
+  reason: string;
 }
 
 // Interface for storing the trained regression model results
@@ -19,9 +53,22 @@ export const MIN_CALIBRATION_POINTS = 5; // Minimum calibration points required 
 const SMOOTHING_WINDOW = 4;       // Number of frames for smoothing  (higher value -> smoother but slower response)
 const REGRESSION_PRECISION = 5;   // Number of decimal places for regression results
 
-// Kalman filter parameters
+// Enhanced Kalman filter parameters
 const KALMAN_R = 10; // Measurement noise covariance
 const KALMAN_Q = 0.1; // Process noise covariance
+
+// Default smoothing configuration
+const DEFAULT_SMOOTHING_CONFIG: SmoothingConfig = {
+  enableKalmanFilter: true,
+  enableExponentialSmoothing: true,
+  enableOutlierDetection: true,
+  kalmanProcessNoise: 0.1,
+  kalmanMeasurementNoise: 10,
+  exponentialAlpha: 0.3,
+  outlierThreshold: 150, // pixels
+  smoothingWindowSize: 5,
+  minConfidenceThreshold: 0.5
+};
 
 @Injectable({
   providedIn: 'root'
@@ -32,9 +79,27 @@ export class GazeEstimationService {
   private isTrained: boolean = false;
   private gazeHistory: PointOfGaze[] = [];
 
+  // Enhanced Kalman filter state (2D with velocity)
+  private kalmanState: KalmanState2D = {
+    x: 0, y: 0, vx: 0, vy: 0,
+    px: 1, py: 1, pvx: 1, pvy: 1
+  };
+  private kalmanInitialized = false;
+
+  // Exponential smoothing state
+  private exponentialState: PointOfGaze = { x: 0, y: 0 };
+  private exponentialInitialized = false;
+
+  // Outlier detection history
+  private outlierHistory: PointOfGaze[] = [];
+  private rejectedOutliers: number = 0;
+
+  // Smoothing configuration
+  private smoothingConfig: SmoothingConfig = { ...DEFAULT_SMOOTHING_CONFIG };
+
+  // Legacy variables (keeping for backward compatibility)
   private kalmanStateX = { x: 0, p: 1 };
   private kalmanStateY = { x: 0, p: 1 };
-  private kalmanInitialized = false;
 
   private eyeballBuffer: {x: number, y: number, z: number}[] = [];
   private static readonly EYE_SMOOTH_WINDOW = 2;
@@ -93,18 +158,35 @@ export class GazeEstimationService {
       return;
     }
 
-    // Prepare data for multivariate regression
-    const X = cleanFeatures;
+    // Prepare data for multivariate regression with polynomial features
+    const X = cleanFeatures.map(features => this.generatePolynomialFeatures(features));
     const Y = cleanFeatures.map((_, i) => [cleanTargetsX[i], cleanTargetsY[i]]);
+
+    console.log('📊 Enhanced feature generation:');
+    console.log('  • Original features per sample:', cleanFeatures[0].length);
+    console.log('  • Polynomial features per sample:', X[0].length);
+    console.log('  • Feature expansion ratio:', (X[0].length / cleanFeatures[0].length).toFixed(1) + 'x');
 
     try {
       const mlr = new MLR(X, Y);
       this.gazeModel.model = mlr;
       this.isTrained = true;
-      console.log('Multivariate regression model trained successfully with', cleanFeatures.length, 'samples.');
+      console.log('✅ Enhanced multivariate regression model trained successfully with', cleanFeatures.length, 'samples.');
+      console.log('📈 Using polynomial features for better edge prediction');
     } catch (e) {
-      console.error('Failed to train multivariate regression model:', e);
-      this.resetModel();
+      console.error('❌ Failed to train enhanced regression model:', e);
+      console.log('🔄 Falling back to simple linear features...');
+      
+      // Fallback to simple features
+      try {
+        const simpleMlr = new MLR(cleanFeatures, Y);
+        this.gazeModel.model = simpleMlr;
+        this.isTrained = true;
+        console.log('⚠️ Fallback linear model trained successfully');
+      } catch (fallbackError) {
+        console.error('❌ Both enhanced and fallback training failed:', fallbackError);
+        this.resetModel();
+      }
     }
   }
 
@@ -127,8 +209,11 @@ export class GazeEstimationService {
     }
 
     try {
-      // Make prediction
-      const prediction = this.gazeModel.model.predict(currentFeatures);
+      // Generate polynomial features for prediction (matching training data format)
+      const enhancedFeatures = this.generatePolynomialFeatures(currentFeatures);
+      
+      // Make prediction with enhanced features
+      const prediction = this.gazeModel.model.predict(enhancedFeatures);
 
       if (!Array.isArray(prediction) || prediction.length < 2) {
         console.warn('[Gaze Prediction] Failed: Unexpected prediction format.', prediction);
@@ -170,32 +255,299 @@ export class GazeEstimationService {
       return this.isTrained;
   }
 
-  // --- Smoothing Logic ---
+  // Add isCalibrated method for tracking workspace compatibility
+  isCalibrated(): boolean {
+    return this.isTrained && this.gazeModel.model !== null;
+  }
+
+  /**
+   * Configure smoothing parameters
+   */
+  configureSmoothingParameters(config: Partial<SmoothingConfig>): void {
+    this.smoothingConfig = { ...this.smoothingConfig, ...config };
+    console.log('🔧 Smoothing configuration updated:', this.smoothingConfig);
+    
+    // Reset smoothing state when configuration changes
+    this.resetSmoothingState();
+  }
+
+  /**
+   * Get current smoothing configuration
+   */
+  getSmoothingConfiguration(): SmoothingConfig {
+    return { ...this.smoothingConfig };
+  }
+
+  /**
+   * Reset all smoothing states
+   */
+  private resetSmoothingState(): void {
+    this.kalmanInitialized = false;
+    this.exponentialInitialized = false;
+    this.kalmanState = {
+      x: 0, y: 0, vx: 0, vy: 0,
+      px: 1, py: 1, pvx: 1, pvy: 1
+    };
+    this.exponentialState = { x: 0, y: 0 };
+    this.outlierHistory = [];
+    this.gazeHistory = [];
+    this.rejectedOutliers = 0;
+    console.log('🔄 Smoothing state reset');
+  }
+
+  /**
+   * Get smoothing statistics
+   */
+  getSmoothingStats(): {
+    totalFrames: number;
+    rejectedOutliers: number;
+    outlierRate: number;
+    averageConfidence: number;
+  } {
+    const totalFrames = this.gazeHistory.length;
+    const outlierRate = totalFrames > 0 ? this.rejectedOutliers / totalFrames : 0;
+    const averageConfidence = this.gazeHistory.length > 0 
+      ? this.gazeHistory.reduce((sum, gaze) => sum + (gaze.confidence || 0), 0) / this.gazeHistory.length
+      : 0;
+
+    return {
+      totalFrames,
+      rejectedOutliers: this.rejectedOutliers,
+      outlierRate,
+      averageConfidence
+    };
+  }
+
+  // --- Enhanced Smoothing Logic ---
   private _applySmoothing(newGaze: PointOfGaze): PointOfGaze {
-    // Kalman filter for each axis
-    if (!this.kalmanInitialized) {
-      this.kalmanStateX = { x: newGaze.x, p: 1 };
-      this.kalmanStateY = { x: newGaze.y, p: 1 };
-      this.kalmanInitialized = true;
-      return { x: newGaze.x, y: newGaze.y };
+    // Add timestamp if not present
+    if (!newGaze.timestamp) {
+      newGaze.timestamp = performance.now();
     }
-    // Predict
-    this.kalmanStateX.p += KALMAN_Q;
-    this.kalmanStateY.p += KALMAN_Q;
-    // Update X
-    const kx = this.kalmanStateX.p / (this.kalmanStateX.p + KALMAN_R);
-    this.kalmanStateX.x = this.kalmanStateX.x + kx * (newGaze.x - this.kalmanStateX.x);
-    this.kalmanStateX.p = (1 - kx) * this.kalmanStateX.p;
-    // Update Y
-    const ky = this.kalmanStateY.p / (this.kalmanStateY.p + KALMAN_R);
-    this.kalmanStateY.x = this.kalmanStateY.x + ky * (newGaze.y - this.kalmanStateY.x);
-    this.kalmanStateY.p = (1 - ky) * this.kalmanStateY.p;
-    return { x: this.kalmanStateX.x, y: this.kalmanStateY.x };
+
+    // Outlier detection first
+    if (this.smoothingConfig.enableOutlierDetection) {
+      const outlierCheck = this.detectOutlier(newGaze);
+      if (outlierCheck.isOutlier) {
+        console.log(`🚫 Outlier detected and rejected: ${outlierCheck.reason}`);
+        this.rejectedOutliers++;
+        
+        // Return last known good position if available
+        if (this.gazeHistory.length > 0) {
+          const lastGood = this.gazeHistory[this.gazeHistory.length - 1];
+          return { x: lastGood.x, y: lastGood.y, confidence: 0.1 };
+        }
+      }
+    }
+
+    let smoothedGaze = { ...newGaze };
+
+    // Apply Kalman filter
+    if (this.smoothingConfig.enableKalmanFilter) {
+      smoothedGaze = this.applyEnhancedKalmanFilter(smoothedGaze);
+    }
+
+    // Apply exponential smoothing
+    if (this.smoothingConfig.enableExponentialSmoothing) {
+      smoothedGaze = this.applyExponentialSmoothing(smoothedGaze);
+    }
+
+    // Update history
+    this.updateGazeHistory(smoothedGaze);
+
+    return smoothedGaze;
+  }
+
+  /**
+   * Enhanced Kalman filter with velocity tracking
+   */
+  private applyEnhancedKalmanFilter(newGaze: PointOfGaze): PointOfGaze {
+    if (!this.kalmanInitialized) {
+      this.kalmanState = {
+        x: newGaze.x, y: newGaze.y, vx: 0, vy: 0,
+        px: 1, py: 1, pvx: 1, pvy: 1
+      };
+      this.kalmanInitialized = true;
+      return { ...newGaze };
+    }
+
+    const dt = 1; // Time step (normalized)
+    const Q = this.smoothingConfig.kalmanProcessNoise;
+    const R = this.smoothingConfig.kalmanMeasurementNoise;
+
+    // Prediction step
+    const predictedX = this.kalmanState.x + this.kalmanState.vx * dt;
+    const predictedY = this.kalmanState.y + this.kalmanState.vy * dt;
+    
+    const predictedPx = this.kalmanState.px + this.kalmanState.pvx * dt * dt + Q;
+    const predictedPy = this.kalmanState.py + this.kalmanState.pvy * dt * dt + Q;
+    const predictedPvx = this.kalmanState.pvx + Q;
+    const predictedPvy = this.kalmanState.pvy + Q;
+
+    // Update step
+    const Kx = predictedPx / (predictedPx + R);
+    const Ky = predictedPy / (predictedPy + R);
+
+    this.kalmanState.x = predictedX + Kx * (newGaze.x - predictedX);
+    this.kalmanState.y = predictedY + Ky * (newGaze.y - predictedY);
+    
+    // Update velocity estimate
+    if (this.gazeHistory.length > 0) {
+      const lastGaze = this.gazeHistory[this.gazeHistory.length - 1];
+      this.kalmanState.vx = (newGaze.x - lastGaze.x) * 0.3 + this.kalmanState.vx * 0.7;
+      this.kalmanState.vy = (newGaze.y - lastGaze.y) * 0.3 + this.kalmanState.vy * 0.7;
+    }
+
+    this.kalmanState.px = (1 - Kx) * predictedPx;
+    this.kalmanState.py = (1 - Ky) * predictedPy;
+    this.kalmanState.pvx = predictedPvx;
+    this.kalmanState.pvy = predictedPvy;
+
+    return {
+      x: this.kalmanState.x,
+      y: this.kalmanState.y,
+      timestamp: newGaze.timestamp,
+      confidence: newGaze.confidence
+    };
+  }
+
+  /**
+   * Exponential smoothing for additional noise reduction
+   */
+  private applyExponentialSmoothing(newGaze: PointOfGaze): PointOfGaze {
+    if (!this.exponentialInitialized) {
+      this.exponentialState = { x: newGaze.x, y: newGaze.y };
+      this.exponentialInitialized = true;
+      return { ...newGaze };
+    }
+
+    const alpha = this.smoothingConfig.exponentialAlpha;
+    
+    this.exponentialState.x = alpha * newGaze.x + (1 - alpha) * this.exponentialState.x;
+    this.exponentialState.y = alpha * newGaze.y + (1 - alpha) * this.exponentialState.y;
+
+    return {
+      x: this.exponentialState.x,
+      y: this.exponentialState.y,
+      timestamp: newGaze.timestamp,
+      confidence: newGaze.confidence
+    };
+  }
+
+  /**
+   * Detect outliers using statistical methods
+   */
+  private detectOutlier(newGaze: PointOfGaze): OutlierDetectionResult {
+    if (this.gazeHistory.length < 3) {
+      return { isOutlier: false, confidence: 1.0, reason: 'insufficient history' };
+    }
+
+    const recent = this.gazeHistory.slice(-3);
+    const avgX = recent.reduce((sum, gaze) => sum + gaze.x, 0) / recent.length;
+    const avgY = recent.reduce((sum, gaze) => sum + gaze.y, 0) / recent.length;
+
+    const distance = Math.sqrt(
+      Math.pow(newGaze.x - avgX, 2) + Math.pow(newGaze.y - avgY, 2)
+    );
+
+    if (distance > this.smoothingConfig.outlierThreshold) {
+      return {
+        isOutlier: true,
+        confidence: Math.min(distance / this.smoothingConfig.outlierThreshold, 5.0),
+        reason: `distance ${distance.toFixed(1)}px exceeds threshold ${this.smoothingConfig.outlierThreshold}px`
+      };
+    }
+
+    // Check for sudden velocity changes
+    if (this.gazeHistory.length >= 2) {
+      const last = this.gazeHistory[this.gazeHistory.length - 1];
+      const beforeLast = this.gazeHistory[this.gazeHistory.length - 2];
+      
+      const currentVelocity = Math.sqrt(
+        Math.pow(newGaze.x - last.x, 2) + Math.pow(newGaze.y - last.y, 2)
+      );
+      const lastVelocity = Math.sqrt(
+        Math.pow(last.x - beforeLast.x, 2) + Math.pow(last.y - beforeLast.y, 2)
+      );
+
+      if (currentVelocity > lastVelocity * 3 && currentVelocity > 50) {
+        return {
+          isOutlier: true,
+          confidence: currentVelocity / (lastVelocity || 1),
+          reason: `sudden velocity change: ${currentVelocity.toFixed(1)}px/frame`
+        };
+      }
+    }
+
+    return { isOutlier: false, confidence: 1.0, reason: 'normal movement' };
+  }
+
+  /**
+   * Update gaze history with size limit
+   */
+  private updateGazeHistory(gaze: PointOfGaze): void {
+    this.gazeHistory.push(gaze);
+    
+    if (this.gazeHistory.length > this.smoothingConfig.smoothingWindowSize * 2) {
+      this.gazeHistory.shift();
+    }
   }
 
   resetSmoothing(): void {
     this.gazeHistory = [];
     this.kalmanInitialized = false;
+    
+    // Also reset enhanced smoothing state
+    this.resetSmoothingState();
+  }
+
+  /**
+   * Generate polynomial features to capture non-linear gaze patterns
+   * Input: [leftIrisX, leftIrisY, leftIrisZ, rightIrisX, rightIrisY, rightIrisZ, leftPupilX, leftPupilY, rightPupilX, rightPupilY]
+   * Output: Enhanced feature vector with polynomial combinations
+   */
+  private generatePolynomialFeatures(features: number[]): number[] {
+    const [leftIrisX, leftIrisY, leftIrisZ, rightIrisX, rightIrisY, rightIrisZ, leftPupilX, leftPupilY, rightPupilX, rightPupilY] = features;
+    
+    // Start with original features
+    const enhanced = [...features];
+    
+    // Add polynomial terms for better edge prediction
+    // Quadratic terms for iris positions
+    enhanced.push(leftIrisX * leftIrisX);    // leftIrisX^2
+    enhanced.push(leftIrisY * leftIrisY);    // leftIrisY^2
+    enhanced.push(rightIrisX * rightIrisX);  // rightIrisX^2
+    enhanced.push(rightIrisY * rightIrisY);  // rightIrisY^2
+    
+    // Interaction terms between left and right eyes
+    enhanced.push(leftIrisX * rightIrisX);   // left-right X interaction
+    enhanced.push(leftIrisY * rightIrisY);   // left-right Y interaction
+    
+    // Average eye position (important for center bias correction)
+    const avgX = (leftIrisX + rightIrisX) / 2;
+    const avgY = (leftIrisY + rightIrisY) / 2;
+    enhanced.push(avgX);
+    enhanced.push(avgY);
+    enhanced.push(avgX * avgX);              // avgX^2
+    enhanced.push(avgY * avgY);              // avgY^2
+    
+    // Distance from center (for edge detection)
+    const centerX = 0.5;
+    const centerY = 0.5;
+    const distFromCenterX = avgX - centerX;
+    const distFromCenterY = avgY - centerY;
+    enhanced.push(distFromCenterX);
+    enhanced.push(distFromCenterY);
+    enhanced.push(distFromCenterX * distFromCenterX); // distance^2 for edge penalty
+    enhanced.push(distFromCenterY * distFromCenterY);
+    
+    // Pupil-iris relationships (gaze direction indicators)
+    enhanced.push(leftPupilX - leftIrisX);   // left gaze direction X
+    enhanced.push(leftPupilY - leftIrisY);   // left gaze direction Y
+    enhanced.push(rightPupilX - rightIrisX); // right gaze direction X
+    enhanced.push(rightPupilY - rightIrisY); // right gaze direction Y
+    
+    return enhanced;
   }
 
   // --- Feature Extraction Logic ---

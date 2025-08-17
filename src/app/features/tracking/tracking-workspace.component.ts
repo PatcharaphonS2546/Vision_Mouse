@@ -59,6 +59,10 @@ interface GazeTrailPoint extends Point2D {
             <div class="status-dot"></div>
             <span>{{getTrackingStatusText()}}</span>
           </div>
+          <div class="calibration-status" [ngClass]="gazeEstimationService.isCalibrated() ? 'calibrated' : 'not-calibrated'">
+            <span class="calibration-icon">{{gazeEstimationService.isCalibrated() ? '✅' : '⚠️'}}</span>
+            <span>{{gazeEstimationService.isCalibrated() ? 'ปรับเทียบแล้ว' : 'ยังไม่ปรับเทียบ'}}</span>
+          </div>
         </div>
         
         <div class="header-controls">
@@ -263,6 +267,19 @@ interface GazeTrailPoint extends Point2D {
                 <span class="stat-value">{{fixationCount}}</span>
               </div>
             </div>
+            
+            <!-- Mouse Control Status -->
+            <div *ngIf="settings.enableMouseControl" class="mouse-control-status">
+              <div class="status-header">
+                <span class="status-icon">🖱️</span>
+                <span class="status-text">Mouse Control Active</span>
+                <div class="status-indicator active"></div>
+              </div>
+              <div *ngIf="lastMouseControlPosition" class="mouse-position">
+                <span>Position: ({{lastMouseControlPosition.x.toFixed(0)}}, {{lastMouseControlPosition.y.toFixed(0)}})</span>
+                <span class="position-age">{{getMousePositionAge()}}ms ago</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -396,6 +413,30 @@ interface GazeTrailPoint extends Point2D {
       border-radius: 20px;
       background: rgba(255, 255, 255, 0.1);
       font-size: 0.9rem;
+    }
+
+    .calibration-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.85rem;
+      padding: 4px 10px;
+      border-radius: 15px;
+      margin-top: 5px;
+    }
+
+    .calibration-status.calibrated {
+      background: rgba(76, 175, 80, 0.2);
+      color: #4caf50;
+    }
+
+    .calibration-status.not-calibrated {
+      background: rgba(255, 152, 0, 0.2);
+      color: #ff9800;
+    }
+
+    .calibration-icon {
+      font-size: 1rem;
     }
 
     .status-dot {
@@ -759,6 +800,72 @@ interface GazeTrailPoint extends Point2D {
       font-size: 0.9rem;
     }
 
+    .mouse-control-status {
+      margin-top: 15px;
+      padding: 12px;
+      background: rgba(255, 68, 68, 0.1);
+      border: 1px solid rgba(255, 68, 68, 0.3);
+      border-radius: 8px;
+    }
+
+    .status-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .status-icon {
+      font-size: 1.1rem;
+    }
+
+    .status-text {
+      font-weight: 600;
+      color: #ff4444;
+    }
+
+    .status-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-left: auto;
+    }
+
+    .status-indicator.active {
+      background: #ff4444;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.5; }
+      100% { opacity: 1; }
+    }
+
+    @keyframes slideIn {
+      0% {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+      100% {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+
+    .mouse-position {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.85rem;
+      opacity: 0.8;
+    }
+
+    .position-age {
+      font-size: 0.75rem;
+      opacity: 0.6;
+    }
+
     .settings-panel {
       position: fixed;
       top: 0;
@@ -952,6 +1059,10 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
   gazeTrail: GazeTrailPoint[] = [];
   fixationCount = 0;
   
+  // Mouse control
+  lastMouseControlPosition: { x: number, y: number, timestamp: number } | null = null;
+  mouseIndicatorTimeout: any = null;
+  
   // Canvas dimensions
   gazeCanvasWidth = 800;
   gazeCanvasHeight = 600;
@@ -977,7 +1088,7 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
   constructor(
     private stateService: StateService,
     private cameraService: CameraService,
-    private gazeEstimationService: EnhancedGazeEstimationService,
+    public gazeEstimationService: EnhancedGazeEstimationService,
     private gazeProcessingService: GazeProcessingService,
     private mediapipeService: MediapipeService,
     private errorHandler: ErrorHandlerService,
@@ -1132,91 +1243,181 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
     try {
       const video = this.videoElement.nativeElement;
       
-      // Use real gaze processing service
-      const frameResult = this.gazeProcessingService.processFrame(
-        video,
-        true, // isGazePredictionEnabled
-        null, // currentFeatures
-        Date.now() // timestamp
-      );
+      // First, get MediaPipe landmarks for feature extraction
+      const mediaPipeResults = this.mediapipeService.detectLandmarks(video, Date.now());
       
-      if (frameResult && frameResult.predictedGaze) {
-        // Update current gaze result
-        this.currentGazeResult = {
-          gazePoint: frameResult.predictedGaze,
-          gazeVector: {
-            origin: { x: 0, y: 0, z: 0 },
-            direction: { x: frameResult.leftGazeVector?.[0] || 0, y: frameResult.leftGazeVector?.[1] || 0, z: frameResult.leftGazeVector?.[2] || 0 },
-            confidence: frameResult.quality.overall
-          },
-          confidence: frameResult.quality.overall,
-          quality: this.mapQualityLevel(frameResult.quality.overall),
-          headPose: frameResult.headPose || { pitch: 0, yaw: 0, roll: 0, confidence: 0 },
-          pupilData: {
-            leftPupil: {
-              center: { x: frameResult.leftEyeballCenter?.[0] || 0, y: frameResult.leftEyeballCenter?.[1] || 0 },
-              radius: 3,
-              diameter: 6,
-              confidence: frameResult.quality.eyeDetection
-            },
-            rightPupil: {
-              center: { x: frameResult.rightEyeballCenter?.[0] || 0, y: frameResult.rightEyeballCenter?.[1] || 0 },
-              radius: 3,
-              diameter: 6,
-              confidence: frameResult.quality.eyeDetection
-            }
-          },
-          timestamp: Date.now(),
-          processingTime: frameResult.processingTime
-        };
+      if (mediaPipeResults && mediaPipeResults.faceLandmarks && mediaPipeResults.faceLandmarks.length > 0) {
+        // Extract features for gaze prediction
+        const features = this.extractFeaturesFromMediaPipe(mediaPipeResults);
         
-        // Convert to EyeTrackingData format
-        if (frameResult.faceData) {
-          this.currentEyeData = {
-            faceDetected: true,
-            frameNumber: Date.now(),
-            processingTime: frameResult.processingTime,
-            faceBox: frameResult.faceData.boundingBox,
-            leftEye: {
-              landmarks: [],
-              center: { x: frameResult.leftEyeballCenter?.[0] || 0, y: frameResult.leftEyeballCenter?.[1] || 0 },
-              isOpen: frameResult.quality.eyeDetection > 0.5,
-              openness: frameResult.quality.eyeDetection,
-              pupil: {
+        if (features && features.length === 10) {
+          // Use real gaze processing service with extracted features
+          const frameResult = this.gazeProcessingService.processFrame(
+            video,
+            true, // isGazePredictionEnabled
+            features, // currentFeatures - real extracted features
+            Date.now() // timestamp
+          );
+          
+          if (frameResult && frameResult.predictedGaze) {
+            console.debug('Real-time gaze tracking:', frameResult.predictedGaze);
+            
+            // Update current gaze result
+            this.currentGazeResult = {
+              gazePoint: frameResult.predictedGaze,
+              gazeVector: {
+                origin: { x: 0, y: 0, z: 0 },
+                direction: { x: frameResult.leftGazeVector?.[0] || 0, y: frameResult.leftGazeVector?.[1] || 0, z: frameResult.leftGazeVector?.[2] || 0 },
+                confidence: 0.8
+              },
+              confidence: 0.8,
+              quality: this.mapQualityLevel(0.8),
+              headPose: { pitch: 0, yaw: 0, roll: 0, confidence: 0.8 },
+              pupilData: {
+                leftPupil: {
+                  center: { x: frameResult.leftEyeballCenter?.[0] || 0, y: frameResult.leftEyeballCenter?.[1] || 0 },
+                  radius: 3,
+                  diameter: 6,
+                  confidence: 0.8
+                },
+                rightPupil: {
+                  center: { x: frameResult.rightEyeballCenter?.[0] || 0, y: frameResult.rightEyeballCenter?.[1] || 0 },
+                  radius: 3,
+                  diameter: 6,
+                  confidence: 0.8
+                }
+              },
+              timestamp: Date.now(),
+              processingTime: 16 // Estimate
+            };
+            
+            // Convert to EyeTrackingData format for UI display
+            this.currentEyeData = {
+              faceDetected: true,
+              frameNumber: Date.now(),
+              processingTime: 16,
+              faceBox: {
+                x: video.videoWidth * 0.1,
+                y: video.videoHeight * 0.1,
+                width: video.videoWidth * 0.8,
+                height: video.videoHeight * 0.8
+              },
+              leftEye: {
+                landmarks: [],
                 center: { x: frameResult.leftEyeballCenter?.[0] || 0, y: frameResult.leftEyeballCenter?.[1] || 0 },
-                radius: 3,
-                diameter: 6,
-                confidence: frameResult.quality.eyeDetection
-              }
-            },
-            rightEye: {
-              landmarks: [],
-              center: { x: frameResult.rightEyeballCenter?.[0] || 0, y: frameResult.rightEyeballCenter?.[1] || 0 },
-              isOpen: frameResult.quality.eyeDetection > 0.5,
-              openness: frameResult.quality.eyeDetection,
-              pupil: {
+                isOpen: true,
+                openness: 0.8,
+                pupil: {
+                  center: { x: frameResult.leftEyeballCenter?.[0] || 0, y: frameResult.leftEyeballCenter?.[1] || 0 },
+                  radius: 3,
+                  diameter: 6,
+                  confidence: 0.8
+                }
+              },
+              rightEye: {
+                landmarks: [],
                 center: { x: frameResult.rightEyeballCenter?.[0] || 0, y: frameResult.rightEyeballCenter?.[1] || 0 },
-                radius: 3,
-                diameter: 6,
-                confidence: frameResult.quality.eyeDetection
-              }
-            },
-            headPose: frameResult.headPose || { pitch: 0, yaw: 0, roll: 0, confidence: 0 },
-            timestamp: Date.now()
-          };
+                isOpen: true,
+                openness: 0.8,
+                pupil: {
+                  center: { x: frameResult.rightEyeballCenter?.[0] || 0, y: frameResult.rightEyeballCenter?.[1] || 0 },
+                  radius: 3,
+                  diameter: 6,
+                  confidence: 0.8
+                }
+              },
+              headPose: { pitch: 0, yaw: 0, roll: 0, confidence: 0.8 },
+              timestamp: Date.now()
+            };
+            
+            this.addToGazeTrail(frameResult.predictedGaze, 0.8);
+            
+            // Mouse control
+            if (this.settings.enableMouseControl) {
+              this.updateMousePosition(frameResult.predictedGaze);
+            }
+          }
         }
-        
-        this.addToGazeTrail(frameResult.predictedGaze, frameResult.quality.overall);
-        
-        // Mouse control
-        if (this.settings.enableMouseControl) {
-          this.updateMousePosition(frameResult.predictedGaze);
-        }
+      } else {
+        // No face detected - clear current results
+        this.currentGazeResult = null;
+        this.currentEyeData = null;
       }
       
     } catch (error) {
       console.error('Frame processing error:', error);
     }
+  }
+
+  // Extract features from MediaPipe results (same method used in calibration)
+  private extractFeaturesFromMediaPipe(results: any): number[] | null {
+    if (!results || !results.faceLandmarks || results.faceLandmarks.length === 0) {
+      return null;
+    }
+    
+    const landmarks = results.faceLandmarks[0];
+    if (landmarks.length < 478) return null;
+
+    // Use same indices as calibration
+    const LEFT_IRIS_INDICES = [473, 474, 475, 476, 477];
+    const RIGHT_IRIS_INDICES = [468, 469, 470, 471, 472];
+    const LEFT_PUPIL = 468;
+    const RIGHT_PUPIL = 473;
+
+    const leftIrisCenter = this.calculateAveragePosition(landmarks, LEFT_IRIS_INDICES) || { x: 0, y: 0, z: 0 };
+    const rightIrisCenter = this.calculateAveragePosition(landmarks, RIGHT_IRIS_INDICES) || { x: 0, y: 0, z: 0 };
+    const leftPupil = landmarks[LEFT_PUPIL] || { x: 0, y: 0 };
+    const rightPupil = landmarks[RIGHT_PUPIL] || { x: 0, y: 0 };
+
+    const features: number[] = [
+      leftIrisCenter.x ?? 0, leftIrisCenter.y ?? 0, leftIrisCenter.z ?? 0,
+      rightIrisCenter.x ?? 0, rightIrisCenter.y ?? 0, rightIrisCenter.z ?? 0,
+      leftPupil.x ?? 0, leftPupil.y ?? 0,
+      rightPupil.x ?? 0, rightPupil.y ?? 0
+    ];
+
+    if (features.length !== 10) {
+      console.warn(`Feature extraction error: expected 10 features, got ${features.length}`);
+      return null;
+    }
+    
+    if (features.some(isNaN)) {
+      console.warn("NaN value detected in extracted features:", features);
+      return null;
+    }
+    
+    return features;
+  }
+
+  private calculateAveragePosition(landmarks: any[], indices: number[]): { x: number, y: number, z?: number } | null {
+    let sumX = 0, sumY = 0, sumZ = 0, count = 0;
+    let hasZ = false;
+    
+    for (const index of indices) {
+      const lm = landmarks?.[index];
+      if (lm && typeof lm.x === 'number' && typeof lm.y === 'number') {
+        sumX += lm.x; 
+        sumY += lm.y;
+        if (typeof lm.z === 'number') { 
+          sumZ += lm.z; 
+          hasZ = true; 
+        }
+        count++;
+      }
+    }
+    
+    if (count === 0) return null;
+    
+    const avgPos: { x: number, y: number, z?: number } = { 
+      x: sumX / count, 
+      y: sumY / count 
+    };
+    
+    if (hasZ) { 
+      avgPos.z = sumZ / count; 
+    }
+    
+    return avgPos;
   }
 
   private updateGazeVisualization(result: GazeEstimationResult) {
@@ -1241,9 +1442,109 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
   }
 
   private updateMousePosition(gazePoint: Point2D) {
+    // Apply sensitivity adjustment
+    const adjustedX = gazePoint.x * this.settings.sensitivity;
+    const adjustedY = gazePoint.y * this.settings.sensitivity;
+    
+    // Clamp coordinates to screen bounds with margin for safety
+    const margin = 50; // Prevent cursor from going too close to edges
+    const clampedX = Math.max(margin, Math.min(window.screen.width - margin, adjustedX));
+    const clampedY = Math.max(margin, Math.min(window.screen.height - margin, adjustedY));
+    
+    // Store current mouse control position for visualization
+    this.lastMouseControlPosition = {
+      x: clampedX,
+      y: clampedY,
+      timestamp: Date.now()
+    };
+    
+    // Calculate relative position on screen
+    const relativeX = (clampedX / window.screen.width * 100).toFixed(1);
+    const relativeY = (clampedY / window.screen.height * 100).toFixed(1);
+    
+    // Enhanced logging with more details
+    console.log(`🖱️ Mouse Control Active:
+      📍 Position: (${clampedX.toFixed(0)}, ${clampedY.toFixed(0)})
+      📊 Relative: (${relativeX}%, ${relativeY}%)
+      🖥️ Screen: ${window.screen.width}x${window.screen.height}
+      🎯 Raw Gaze: (${gazePoint.x.toFixed(1)}, ${gazePoint.y.toFixed(1)})
+      ⚙️ Sensitivity: ${this.settings.sensitivity}x
+      ✅ Calibrated: ${this.gazeEstimationService.isCalibrated()}`);
+    
+    // Show visual feedback
+    this.showMouseControlFeedback(clampedX, clampedY);
+    
     // In a real implementation, this would use the Screen Capture API
     // or a native application to control the mouse cursor
-    console.log('Mouse control:', gazePoint);
+    // For web demo: Show notification on significant movements
+    if (Math.abs(clampedX - (this.lastMouseControlPosition?.x || 0)) > 100 || 
+        Math.abs(clampedY - (this.lastMouseControlPosition?.y || 0)) > 100) {
+      this.showMouseMovementNotification(clampedX, clampedY);
+    }
+  }
+
+  private showMouseMovementNotification(x: number, y: number) {
+    // Create temporary notification for significant mouse movements
+    const notification = document.createElement('div');
+    notification.style.position = 'fixed';
+    notification.style.top = '20px';
+    notification.style.right = '20px';
+    notification.style.background = 'rgba(255, 68, 68, 0.9)';
+    notification.style.color = 'white';
+    notification.style.padding = '10px 15px';
+    notification.style.borderRadius = '8px';
+    notification.style.fontSize = '14px';
+    notification.style.fontWeight = '600';
+    notification.style.zIndex = '10001';
+    notification.style.animation = 'slideIn 0.3s ease';
+    notification.textContent = `Mouse → (${x.toFixed(0)}, ${y.toFixed(0)})`;
+    
+    document.body.appendChild(notification);
+    
+    // Auto-remove after 1 second
+    setTimeout(() => {
+      if (notification.parentNode) {
+        notification.parentNode.removeChild(notification);
+      }
+    }, 1000);
+  }
+
+  private showMouseControlFeedback(x: number, y: number) {
+    // Create or update mouse control indicator
+    let indicator = document.getElementById('mouse-control-indicator');
+    
+    if (!indicator) {
+      indicator = document.createElement('div');
+      indicator.id = 'mouse-control-indicator';
+      indicator.style.position = 'fixed';
+      indicator.style.width = '12px';
+      indicator.style.height = '12px';
+      indicator.style.borderRadius = '50%';
+      indicator.style.backgroundColor = '#ff4444';
+      indicator.style.border = '2px solid #ffffff';
+      indicator.style.boxShadow = '0 0 10px rgba(255, 68, 68, 0.6)';
+      indicator.style.pointerEvents = 'none';
+      indicator.style.zIndex = '10000';
+      indicator.style.transition = 'all 0.1s ease';
+      document.body.appendChild(indicator);
+    }
+    
+    // Convert screen coordinates to viewport coordinates
+    const viewportX = (x / window.screen.width) * window.innerWidth;
+    const viewportY = (y / window.screen.height) * window.innerHeight;
+    
+    // Update position
+    indicator.style.left = `${viewportX - 6}px`;
+    indicator.style.top = `${viewportY - 6}px`;
+    indicator.style.opacity = '1';
+    
+    // Auto-hide after 200ms of no updates
+    clearTimeout(this.mouseIndicatorTimeout);
+    this.mouseIndicatorTimeout = setTimeout(() => {
+      if (indicator) {
+        indicator.style.opacity = '0.3';
+      }
+    }, 200);
   }
 
   private updateCameraState(state: CameraState) {
@@ -1260,13 +1561,17 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
   private updateCanvasSize() {
     if (this.gazeDisplay?.nativeElement) {
       const rect = this.gazeDisplay.nativeElement.getBoundingClientRect();
-      this.gazeCanvasWidth = rect.width;
-      this.gazeCanvasHeight = rect.height;
       
-      if (this.gazeCanvas?.nativeElement) {
-        this.gazeCanvas.nativeElement.width = this.gazeCanvasWidth;
-        this.gazeCanvas.nativeElement.height = this.gazeCanvasHeight;
-      }
+      // Use setTimeout to avoid ExpressionChangedAfterItHasBeenCheckedError
+      setTimeout(() => {
+        this.gazeCanvasWidth = rect.width;
+        this.gazeCanvasHeight = rect.height;
+        
+        if (this.gazeCanvas?.nativeElement) {
+          this.gazeCanvas.nativeElement.width = this.gazeCanvasWidth;
+          this.gazeCanvas.nativeElement.height = this.gazeCanvasHeight;
+        }
+      }, 0);
     }
   }
 
@@ -1421,6 +1726,11 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
 
   getSmoothness(): number {
     return Math.max(0, Math.min(100, 95 - (this.settings.smoothingLevel * 20)));
+  }
+
+  getMousePositionAge(): number {
+    if (!this.lastMouseControlPosition) return 0;
+    return Date.now() - this.lastMouseControlPosition.timestamp;
   }
 
   private loadSettings() {
