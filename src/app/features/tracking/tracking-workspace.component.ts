@@ -3,7 +3,7 @@
  * Real-time eye tracking with gaze visualization and mouse control
  */
 
-import { Component, OnInit, OnDestroy, ElementRef, ViewChild, AfterViewInit } from '@angular/core';
+import { Component, OnInit, OnDestroy, ElementRef, ViewChild, AfterViewInit, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { FormsModule } from '@angular/forms';
@@ -1092,7 +1092,8 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
     private gazeProcessingService: GazeProcessingService,
     private mediapipeService: MediapipeService,
     private errorHandler: ErrorHandlerService,
-    private notifications: NotificationService
+    private notifications: NotificationService,
+    private cdRef: ChangeDetectorRef
   ) {}
 
   ngOnInit() {
@@ -1423,6 +1424,8 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
   private updateGazeVisualization(result: GazeEstimationResult) {
     // Update visualization elements
     // The gaze point is rendered via Angular template
+    // Fix ExpressionChangedAfterItHasBeenCheckedError
+    this.cdRef.detectChanges();
   }
 
   private addToGazeTrail(point: Point2D, confidence: number) {
@@ -1457,6 +1460,8 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
       y: clampedY,
       timestamp: Date.now()
     };
+    // Fix ExpressionChangedAfterItHasBeenCheckedError
+    this.cdRef.detectChanges();
     
     // Calculate relative position on screen
     const relativeX = (clampedX / window.screen.width * 100).toFixed(1);
