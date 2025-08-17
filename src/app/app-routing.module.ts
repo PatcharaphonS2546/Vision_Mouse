@@ -1,20 +1,36 @@
 import { NgModule } from '@angular/core';
 import { RouterModule, Routes } from '@angular/router';
-import { MainDashboardComponent } from './components/main-dashboard/main-dashboard.component';
-import { ModernDashboardComponent } from './components/modern-dashboard/modern-dashboard.component';
-import { AdvancedGazeTrackerComponent } from './components/advanced-gaze-tracker/advanced-gaze-tracker.component';
-import { CalibrationComponent } from './components/calibration/calibration.component';
-import { GazeTrackerComponent } from './components/gaze-tracker/gaze-tracker.component';
-import { EyeTrackingTestComponent } from './components/eye-tracking-test/eye-tracking-test.component';
+
+// New Architecture Components
+import { AppShellComponent } from './features/shell/app-shell.component';
+import { WelcomeComponent } from './features/welcome/welcome.component';
+import { CalibrationComponent as NewCalibrationComponent } from './features/calibration/calibration.component';
+import { TrackingWorkspaceComponent } from './features/tracking/tracking-workspace.component';
+
+// Keep only essential legacy components
+import { PerformanceDashboardComponent } from './components/performance-dashboard/performance-dashboard.component';
 
 const routes: Routes = [
-  { path: '', component: ModernDashboardComponent },
-  { path: 'dashboard', component: MainDashboardComponent },
-  { path: 'advanced-tracker', component: AdvancedGazeTrackerComponent },
-  { path: 'tracker', component: GazeTrackerComponent },
-  { path: 'calibration', component: CalibrationComponent },
-  { path: 'test', component: EyeTrackingTestComponent },
-  { path: '**', redirectTo: '/' }
+  {
+    path: '',
+    component: AppShellComponent,
+    children: [
+      { path: '', redirectTo: '/welcome', pathMatch: 'full' },
+      { path: 'welcome', component: WelcomeComponent },
+      { path: 'calibration-new', component: NewCalibrationComponent },
+      { path: 'tracking', component: TrackingWorkspaceComponent },
+      { path: 'performance', component: PerformanceDashboardComponent },
+      {
+        path: 'analytics',
+        loadChildren: () => import('./features/analytics/analytics.module').then(m => m.AnalyticsModule)
+      },
+      {
+        path: 'testing',
+        loadChildren: () => import('./features/testing/testing.module').then(m => m.TestingModule)
+      }
+    ]
+  },
+  { path: '**', redirectTo: '/welcome' }
 ];
 
 @NgModule({

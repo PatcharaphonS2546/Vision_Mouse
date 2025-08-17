@@ -4,6 +4,10 @@ import { VideoSourceService } from '../../services/video-source.service';
 import { CalibrationService } from '../../services/calibration.service';
 import { GazeEstimationService } from '../../services/gaze-estimation.service';
 import { MediapipeService } from '../../services/mediapipe.service';
+import { GazeProcessingService } from '../../services/gaze-processing.service';
+import { EnhancedEyeTrackerService, EyeTrackingData } from '../../services/enhanced-eye-tracker.service';
+import { EnhancedCalibrationService, CalibrationProgress, CalibrationAccuracy } from '../../services/enhanced-calibration.service';
+import { AdvancedGazeCalculationService, GazeCalculationResult } from '../../services/advanced-gaze-calculation.service';
 import { Subject, takeUntil, interval } from 'rxjs';
 
 @Component({
@@ -48,67 +52,148 @@ import { Subject, takeUntil, interval } from 'rxjs';
             <div class="status-item">
               <span class="label">กล้อง:</span>
               <span class="status" [class]="isStreaming ? 'active' : 'inactive'">
-                {{isStreaming ? '🟢 ทำงาน' : '🔴 หยุด'}}
+                {{ isStreaming ? 'ทำงาน' : 'หยุด' }}
               </span>
             </div>
             <div class="status-item">
               <span class="label">MediaPipe:</span>
-              <span class="status" [class]="mediapipeReady ? 'active' : 'inactive'">
-                {{mediapipeReady ? '🟢 พร้อม' : '🟡 กำลังโหลด'}}
+              <span class="status" [class]="mediapipeStatus ? 'active' : 'inactive'">
+                {{ mediapipeStatus ? 'พร้อม' : 'ไม่พร้อม' }}
               </span>
             </div>
             <div class="status-item">
-              <span class="label">Face Detection:</span>
-              <span class="status" [class]="faceDetected ? 'active' : 'inactive'">
-                {{faceDetected ? '🟢 ตรวจพบใบหน้า' : '🔴 ไม่พบใบหน้า'}}
+              <span class="label">Eye Tracking:</span>
+              <span class="status" [class]="eyeTrackingActive ? 'active' : 'inactive'">
+                {{ eyeTrackingActive ? 'ทำงาน' : 'หยุด' }}
               </span>
             </div>
             <div class="status-item">
-              <span class="label">Calibration:</span>
-              <span class="status" [class]="isCalibrated ? 'active' : 'inactive'">
-                {{isCalibrated ? '🟢 สำเร็จ' : (isCalibrating ? '🟡 กำลังปรับ' : '🔴 ยังไม่ได้ปรับ')}}
+              <span class="label">โหมดแสงน้อย:</span>
+              <span class="status" [class]="lowLightMode ? 'active' : 'inactive'">
+                {{ lowLightMode ? 'เปิด' : 'ปิด' }}
               </span>
             </div>
           </div>
 
-          <!-- Gaze Point Display -->
-          <div class="gaze-display">
-            <h3>จุดสายตา</h3>
-            <div class="gaze-coords">
-              <div class="coord">X: {{gazePoint.x.toFixed(0)}}px</div>
-              <div class="coord">Y: {{gazePoint.y.toFixed(0)}}px</div>
+          <div class="metrics-card" *ngIf="eyeTrackingData">
+            <h3>ข้อมูลการติดตาม</h3>
+            <div class="metric-row">
+              <span class="label">ตาซ้าย:</span>
+              <span class="value" [class]="getQualityClass(eyeTrackingData.leftEye.quality)">
+                {{ getQualityText(eyeTrackingData.leftEye.quality) }}
+                ({{ eyeTrackingData.leftEye.isOpen ? 'เปิด' : 'ปิด' }})
+              </span>
             </div>
-            <div class="accuracy-meter">
-              <div class="meter-label">ความแม่นยำ</div>
-              <div class="meter-bar">
-                <div class="meter-fill" [style.width.%]="accuracy"></div>
-              </div>
-              <div class="meter-value">{{accuracy.toFixed(1)}}%</div>
+            <div class="metric-row">
+              <span class="label">ตาขวา:</span>
+              <span class="value" [class]="getQualityClass(eyeTrackingData.rightEye.quality)">
+                {{ getQualityText(eyeTrackingData.rightEye.quality) }}
+                ({{ eyeTrackingData.rightEye.isOpen ? 'เปิด' : 'ปิด' }})
+              </span>
+            </div>
+            <div class="metric-row">
+              <span class="label">ใบหน้า:</span>
+              <span class="value" [class]="getQualityClass(eyeTrackingData.face.quality)">
+                {{ getQualityText(eyeTrackingData.face.quality) }}
+                ({{ (eyeTrackingData.face.confidence * 100).toFixed(1) }}%)
+              </span>
+            </div>
+            <div class="metric-row">
+              <span class="label">FPS:</span>
+              <span class="value">{{ currentFps.toFixed(1) }}</span>
+            </div>
+            <div class="metric-row">
+              <span class="label">ความมั่นใจเฉลี่ย:</span>
+              <span class="value">{{ (eyeTrackingData.averageConfidence * 100).toFixed(1) }}%</span>
             </div>
           </div>
 
-          <!-- Eye Tracking Demo -->
-          <div class="tracking-demo">
-            <h3>ทดสอบ Eye Tracking</h3>
-            <div class="demo-area" #demoArea>
-              <div class="target-dot" 
-                   [style.left.px]="targetPosition.x" 
-                   [style.top.px]="targetPosition.y"
-                   [class.active]="showTarget">
-                🎯
-              </div>
-              <div class="gaze-cursor"
-                   [style.left.px]="gazePoint.x"
-                   [style.top.px]="gazePoint.y"
-                   [class.visible]="isCalibrated">
-                👁️
-              </div>
+          <!-- Advanced Gaze Information -->
+          <div class="gaze-card" *ngIf="advancedGazeResult">
+            <h3>🎯 Advanced Gaze Analysis</h3>
+            <div class="metric-row">
+              <span class="label">Gaze Quality:</span>
+              <span class="value" [class]="getQualityClass(advancedGazeResult.quality)">
+                {{ getQualityText(advancedGazeResult.quality) }}
+              </span>
             </div>
-            <button (click)="startTrackingTest()" 
-                    [disabled]="!isCalibrated" 
-                    class="btn btn-primary">
-              🎮 เริ่มทดสอบ Tracking
-            </button>
+            <div class="metric-row">
+              <span class="label">Confidence:</span>
+              <span class="value">{{ (advancedGazeResult.confidence * 100).toFixed(1) }}%</span>
+            </div>
+            <div class="metric-row">
+              <span class="label">Head Yaw:</span>
+              <span class="value">{{ advancedGazeResult.headPose.yaw.toFixed(1) }}°</span>
+            </div>
+            <div class="metric-row">
+              <span class="label">Head Pitch:</span>
+              <span class="value">{{ advancedGazeResult.headPose.pitch.toFixed(1) }}°</span>
+            </div>
+            <div class="metric-row">
+              <span class="label">Pupil Size (Avg):</span>
+              <span class="value">{{ ((advancedGazeResult.pupilData.leftPupil.diameter + advancedGazeResult.pupilData.rightPupil.diameter) / 2).toFixed(1) }}px</span>
+            </div>
+            <div class="metric-row">
+              <span class="label">Gaze Position:</span>
+              <span class="value">X: {{ gazePoint.x.toFixed(0) }}, Y: {{ gazePoint.y.toFixed(0) }}</span>
+            </div>
+            <div class="metric-row">
+              <span class="label">Screen Position:</span>
+              <span class="value">{{ getScreenPercentage() }}</span>
+            </div>
+          </div>
+
+          <div class="controls-card">
+            <h3>การควบคุม</h3>
+            <div class="control-group">
+              <label>
+                <input type="checkbox" 
+                       [checked]="lowLightMode" 
+                       (change)="toggleLowLightMode()">
+                เปิดโหมดแสงน้อย
+              </label>
+            </div>
+            <div class="control-group">
+              <label>
+                <input type="checkbox" 
+                       [checked]="showLandmarks" 
+                       (change)="toggleLandmarks()">
+                แสดง Landmarks
+              </label>
+            </div>
+            <div class="control-group">
+              <label>
+                <input type="checkbox" 
+                       [checked]="showEyeRegions" 
+                       (change)="toggleEyeRegions()">
+                แสดงขอบเขตดวงตา
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Performance Information -->
+      <div class="performance-info" *ngIf="performanceMetrics">
+        <h3>ข้อมูลประสิทธิภาพ</h3>
+        <div class="perf-grid">
+          <div class="perf-item">
+            <span class="perf-label">เวลาประมวลผลเฉลี่ย:</span>
+            <span class="perf-value">{{ performanceMetrics.averageProcessingTime.toFixed(2) }} ms</span>
+          </div>
+          <div class="perf-item">
+            <span class="perf-label">FPS เป้าหมาย:</span>
+            <span class="perf-value">30 FPS</span>
+          </div>
+          <div class="perf-item">
+            <span class="perf-label">FPS ปัจจุบัน:</span>
+            <span class="perf-value" [class]="currentFps >= 25 ? 'good' : currentFps >= 15 ? 'warning' : 'poor'">
+              {{ currentFps.toFixed(1) }} FPS
+            </span>
+          </div>
+          <div class="perf-item">
+            <span class="perf-label">เฟรมที่ประมวลผล:</span>
+            <span class="perf-value">{{ eyeTrackingData?.frameNumber || 0 }}</span>
           </div>
         </div>
       </div>
@@ -116,8 +201,32 @@ import { Subject, takeUntil, interval } from 'rxjs';
       <!-- Calibration Overlay -->
       <div class="calibration-overlay" *ngIf="isCalibrating">
         <div class="calibration-content">
-          <h2>🎯 การปรับเทียบระบบ</h2>
-          <p>มองที่จุดสีแดงและกดเมื่อมองตรงจุด</p>
+          <h2>🎯 การปรับเทียบระบบแบบใหม่</h2>
+          <p>มองที่จุดสีแดงและให้ตานิ่งจนกว่าจะเปลี่ยนตำแหน่ง</p>
+          
+          <!-- Enhanced Progress Display -->
+          <div class="enhanced-progress" *ngIf="enhancedCalibrationProgress">
+            <div class="progress-info">
+              <div class="point-counter">
+                จุดที่ {{ enhancedCalibrationProgress.currentPoint }} / {{ enhancedCalibrationProgress.totalPoints }}
+              </div>
+              <div class="sample-counter">
+                ตัวอย่าง: {{ enhancedCalibrationProgress.collectedSamples }} / {{ enhancedCalibrationProgress.requiredSamples }}
+              </div>
+              <div class="quality-indicator">
+                คุณภาพ: <span [class]="'quality-' + enhancedCalibrationProgress.qualityScore">
+                  {{ (enhancedCalibrationProgress.qualityScore * 100).toFixed(0) }}%
+                </span>
+              </div>
+            </div>
+            
+            <div class="progress-bar-enhanced">
+              <div class="progress-fill-enhanced" 
+                   [style.width.%]="(enhancedCalibrationProgress.currentPoint / enhancedCalibrationProgress.totalPoints) * 100">
+              </div>
+            </div>
+          </div>
+          
           <div class="calibration-area">
             <div class="calibration-point"
                  [style.left.px]="calibrationPoint.x"
@@ -126,16 +235,27 @@ import { Subject, takeUntil, interval } from 'rxjs';
               🔴
             </div>
           </div>
-          <div class="calibration-progress">
+          
+          <!-- Legacy Progress (fallback) -->
+          <div class="calibration-progress" *ngIf="!enhancedCalibrationProgress">
             <div class="progress-bar">
               <div class="progress-fill" [style.width.%]="(calibrationPoints.length / 9) * 100"></div>
             </div>
             <p>จุดปรับเทียบ: {{calibrationPoints.length}} / 9</p>
           </div>
+          
           <button (click)="stopCalibration()" class="btn btn-secondary">
             ❌ ยกเลิก
           </button>
         </div>
+      </div>
+
+      <!-- Gaze Cursor -->
+      <div class="gaze-cursor" 
+           *ngIf="isCalibrated && faceDetected && !isCalibrating"
+           [style.left.px]="gazePoint.x - 10"
+           [style.top.px]="gazePoint.y - 10">
+        👁️
       </div>
     </div>
   `,
@@ -147,16 +267,32 @@ export class EyeTrackingTestComponent implements OnInit, OnDestroy {
   @ViewChild('demoArea') demoArea!: ElementRef<HTMLDivElement>;
 
   private destroy$ = new Subject<void>();
+  private autoCalibrationInterval?: number;
   private ctx: CanvasRenderingContext2D | null = null;
 
   // Status flags
   isStreaming = false;
   mediapipeReady = false;
+  mediapipeStatus = false;
   faceDetected = false;
   isCalibrating = false;
   isCalibrated = false;
   showTarget = false;
+  
+  // Enhanced eye tracking properties
+  eyeTrackingActive = false;
+  lowLightMode = false;
+  showLandmarks = true;
+  showEyeRegions = true;
+  eyeTrackingData: EyeTrackingData | null = null;
+  advancedGazeResult: GazeCalculationResult | null = null;
+  currentFps = 0;
+  performanceMetrics: { averageProcessingTime: number; fps: number } | null = null;
 
+  // Enhanced calibration properties
+  enhancedCalibrationProgress: CalibrationProgress | null = null;
+  enhancedCalibrationAccuracy: CalibrationAccuracy | null = null;
+  
   // Tracking data
   gazePoint = { x: 0, y: 0 };
   targetPosition = { x: 100, y: 100 };
@@ -174,11 +310,13 @@ export class EyeTrackingTestComponent implements OnInit, OnDestroy {
   constructor(
     private videoService: VideoSourceService,
     private calibrationService: CalibrationService,
+    private enhancedCalibrationService: EnhancedCalibrationService,
     private gazeService: GazeEstimationService,
-    private mediapipeService: MediapipeService
-  ) {}
-
-  ngOnInit() {
+    private mediapipeService: MediapipeService,
+    private gazeProcessingService: GazeProcessingService,
+    private enhancedEyeTracker: EnhancedEyeTrackerService,
+    private gazeCalculationService: AdvancedGazeCalculationService
+  ) {}  ngOnInit() {
     this.initializeServices();
     this.setupEventListeners();
   }
@@ -188,6 +326,7 @@ export class EyeTrackingTestComponent implements OnInit, OnDestroy {
     this.destroy$.next();
     this.destroy$.complete();
     this.stopCamera();
+    this.stopAutoCalibrationCollection();
     
     // Cleanup MediaPipe service
     this.mediapipeService.cleanup();
@@ -198,7 +337,88 @@ export class EyeTrackingTestComponent implements OnInit, OnDestroy {
       // Initialize MediaPipe
       await this.mediapipeService.initialize();
       this.mediapipeReady = true;
+      this.mediapipeStatus = true;
       console.log('MediaPipe initialized for eye tracking test');
+
+      // Initialize Enhanced Eye Tracker
+      const eyeTrackingStarted = await this.enhancedEyeTracker.startTracking();
+      if (eyeTrackingStarted) {
+        this.eyeTrackingActive = true;
+        console.log('Enhanced eye tracking started');
+      }
+
+      // Subscribe to eye tracking data
+      this.enhancedEyeTracker.getEyeTrackingData()
+        .pipe(takeUntil(this.destroy$))
+        .subscribe(data => {
+          this.eyeTrackingData = data;
+          if (data) {
+            this.faceDetected = true;
+            this.updateVisualization();
+          }
+        });
+
+      // Subscribe to low light mode changes
+      this.enhancedEyeTracker.getLowLightMode()
+        .pipe(takeUntil(this.destroy$))
+        .subscribe(enabled => {
+          this.lowLightMode = enabled;
+        });
+
+      // Subscribe to advanced gaze calculation results
+      this.enhancedEyeTracker.getGazeResults()
+        .pipe(takeUntil(this.destroy$))
+        .subscribe(gazeResult => {
+          this.advancedGazeResult = gazeResult;
+          if (gazeResult) {
+            // Update gaze point with advanced calculation
+            this.gazePoint = gazeResult.gazePoint;
+            this.accuracy = gazeResult.confidence * 100;
+            console.log('Advanced gaze point:', gazeResult.gazePoint, 'Quality:', gazeResult.quality);
+          }
+        });
+
+      // Subscribe to enhanced calibration progress
+      this.enhancedCalibrationService.getCalibrationProgress()
+        .pipe(takeUntil(this.destroy$))
+        .subscribe(progress => {
+          this.enhancedCalibrationProgress = progress;
+          if (progress) {
+            // Calculate position based on current point (fallback method)
+            const gridPositions = [
+              { x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.9, y: 0.1 },
+              { x: 0.1, y: 0.5 }, { x: 0.5, y: 0.5 }, { x: 0.9, y: 0.5 },
+              { x: 0.1, y: 0.9 }, { x: 0.5, y: 0.9 }, { x: 0.9, y: 0.9 }
+            ];
+            const pointIndex = Math.min(progress.currentPoint - 1, gridPositions.length - 1);
+            const gridPos = gridPositions[pointIndex] || { x: 0.5, y: 0.5 };
+            this.calibrationPoint = {
+              x: gridPos.x * window.innerWidth,
+              y: gridPos.y * window.innerHeight
+            };
+            console.log('Calibration progress:', progress);
+            
+            // Auto-collect samples when available
+            this.autoCollectCalibrationSample();
+          }
+        });
+
+      // Subscribe to enhanced calibration status
+      this.enhancedCalibrationService.getCalibrationStatus()
+        .pipe(takeUntil(this.destroy$))
+        .subscribe(status => {
+          this.isCalibrating = status === 'collecting' || status === 'initializing';
+          this.isCalibrated = status === 'completed';
+          
+          // Start auto-collection when calibration starts
+          if (status === 'collecting') {
+            this.startAutoCalibrationCollection();
+          } else {
+            this.stopAutoCalibrationCollection();
+          }
+          
+          console.log('Enhanced calibration status:', status);
+        });
 
       // Set up MediaPipe data processing
       this.setupMediaPipeProcessing();
@@ -367,7 +587,7 @@ export class EyeTrackingTestComponent implements OnInit, OnDestroy {
     }
   }
 
-  private drawFaceLandmarks(landmarks: any[]) {
+  private drawLegacyFaceLandmarks(landmarks: any[]) {
     if (!this.ctx || !landmarks) return;
 
     this.ctx.clearRect(0, 0, this.ctx.canvas.width, this.ctx.canvas.height);
@@ -384,10 +604,10 @@ export class EyeTrackingTestComponent implements OnInit, OnDestroy {
     });
 
     // Highlight eyes
-    this.drawEyeRegions(landmarks);
+    this.drawLegacyEyeRegions(landmarks);
   }
 
-  private drawEyeRegions(landmarks: any[]) {
+  private drawLegacyEyeRegions(landmarks: any[]) {
     if (!this.ctx) return;
 
     // Left eye landmarks (indices for MediaPipe face mesh)
@@ -425,13 +645,44 @@ export class EyeTrackingTestComponent implements OnInit, OnDestroy {
   }
 
   async startCalibration() {
+    try {
+      console.log('Starting enhanced calibration');
+      
+      // Start enhanced calibration
+      const success = await this.enhancedCalibrationService.startCalibration(
+        window.innerWidth,
+        window.innerHeight,
+        {
+          pointCount: 9,
+          samplesPerPoint: 10,
+          pointDisplayTime: 3000
+        }
+      );
+      
+      if (success) {
+        console.log('Enhanced calibration started successfully');
+      } else {
+        console.warn('Enhanced calibration failed to start, using legacy method');
+        this.startLegacyCalibration();
+      }
+    } catch (error) {
+      console.error('Error starting calibration:', error);
+      this.startLegacyCalibration();
+    }
+  }
+
+  private startLegacyCalibration() {
     this.isCalibrating = true;
     this.calibrationPoints = [];
     this.moveCalibrationPoint();
-    console.log('Calibration started');
+    console.log('Legacy calibration started');
   }
 
   stopCalibration() {
+    // Stop enhanced calibration
+    this.enhancedCalibrationService.cancelCalibration();
+    
+    // Stop legacy calibration
     this.isCalibrating = false;
     console.log('Calibration stopped');
   }
@@ -521,27 +772,45 @@ export class EyeTrackingTestComponent implements OnInit, OnDestroy {
       const targetsY: number[] = [];
 
       this.calibrationPoints.forEach(point => {
-        // Create realistic features based on calibration point position
-        // These simulate what real eye tracking data would look like
-        const normalizedX = point.x / window.innerWidth;
-        const normalizedY = point.y / window.innerHeight;
-        
-        const pointFeatures = [
-          normalizedX,                           // Normalized screen x
-          normalizedY,                           // Normalized screen y
-          normalizedX + (Math.random() - 0.5) * 0.05,  // Eye position x with slight variation
-          normalizedY + (Math.random() - 0.5) * 0.05,  // Eye position y with slight variation
-          0.5 + Math.random() * 0.2,            // Simulated pupil size
-          Math.random() * 0.1,                  // Simulated blink rate
-          (normalizedX - 0.5) * 0.2,            // Head pose x (based on screen position)
-          (normalizedY - 0.5) * 0.2,            // Head pose y (based on screen position)
-          normalizedX + (Math.random() - 0.5) * 0.02,  // Gaze angle x
-          normalizedY + (Math.random() - 0.5) * 0.02   // Gaze angle y
-        ];
-
-        features.push(pointFeatures);
-        targetsX.push(point.x);
-        targetsY.push(point.y);
+        // Get real eye tracking features from the current video frame
+        const videoElement = this.videoElement?.nativeElement;
+        if (videoElement) {
+          const frameResult = this.gazeProcessingService.processFrame(
+            videoElement,
+            true, // isGazePredictionEnabled
+            null, // currentFeatures
+            Date.now() // timestamp
+          );
+          
+          if (frameResult && frameResult.faceData) {
+            // Use real extracted features instead of simulated data
+            const realFeatures = this.extractRealFeatures(frameResult, point);
+            features.push(realFeatures);
+            targetsX.push(point.x);
+            targetsY.push(point.y);
+          } else {
+            // Fallback: create minimal realistic features based on calibration point
+            const normalizedX = point.x / window.innerWidth;
+            const normalizedY = point.y / window.innerHeight;
+            
+            const fallbackFeatures = [
+              normalizedX,
+              normalizedY,
+              normalizedX,
+              normalizedY,
+              0.5,
+              0.0,
+              (normalizedX - 0.5) * 0.1,
+              (normalizedY - 0.5) * 0.1,
+              normalizedX,
+              normalizedY
+            ];
+            
+            features.push(fallbackFeatures);
+            targetsX.push(point.x);
+            targetsY.push(point.y);
+          }
+        }
       });
 
       // Train the model
@@ -706,5 +975,228 @@ export class EyeTrackingTestComponent implements OnInit, OnDestroy {
 
     moveTarget(); // Initial position
     console.log('Eye tracking test started');
+  }
+  
+  // Enhanced Eye Tracking Methods
+  toggleLowLightMode(): void {
+    this.lowLightMode = !this.lowLightMode;
+    this.enhancedEyeTracker.enableLowLightMode(this.lowLightMode);
+  }
+
+  toggleLandmarks(): void {
+    this.showLandmarks = !this.showLandmarks;
+    this.updateVisualization();
+  }
+
+  toggleEyeRegions(): void {
+    this.showEyeRegions = !this.showEyeRegions;
+    this.updateVisualization();
+  }
+
+  getQualityText(quality: 'excellent' | 'good' | 'poor'): string {
+    switch (quality) {
+      case 'excellent': return 'ดีเยี่ยม';
+      case 'good': return 'ดี';
+      case 'poor': return 'แย่';
+      default: return 'ไม่ทราบ';
+    }
+  }
+
+  getQualityClass(quality: 'excellent' | 'good' | 'poor'): string {
+    switch (quality) {
+      case 'excellent': return 'excellent';
+      case 'good': return 'good';
+      case 'poor': return 'poor';
+      default: return 'unknown';
+    }
+  }
+
+  private updateVisualization(): void {
+    if (!this.ctx || !this.eyeTrackingData) return;
+
+    // Clear canvas
+    this.ctx.clearRect(0, 0, this.ctx.canvas.width, this.ctx.canvas.height);
+
+    // Draw face landmarks if enabled
+    if (this.showLandmarks && this.eyeTrackingData.face.landmarks) {
+      this.drawFaceLandmarks();
+    }
+
+    // Draw eye regions if enabled
+    if (this.showEyeRegions) {
+      this.drawEyeRegions();
+    }
+
+    // Update performance metrics
+    this.updatePerformanceMetrics();
+  }
+
+  private drawFaceLandmarks(): void {
+    if (!this.ctx || !this.eyeTrackingData) return;
+
+    this.ctx.fillStyle = '#00ff00';
+    this.ctx.strokeStyle = '#00ff00';
+    this.ctx.lineWidth = 1;
+
+    // Draw face outline landmarks
+    this.eyeTrackingData.face.landmarks.forEach(landmark => {
+      const x = landmark.x * this.ctx!.canvas.width;
+      const y = landmark.y * this.ctx!.canvas.height;
+      
+      this.ctx!.beginPath();
+      this.ctx!.arc(x, y, 1, 0, 2 * Math.PI);
+      this.ctx!.fill();
+    });
+  }
+
+  private drawEyeRegions(): void {
+    if (!this.ctx || !this.eyeTrackingData) return;
+
+    // Draw left eye region
+    this.drawEyeRegion(this.eyeTrackingData.leftEye, '#ff0000');
+    
+    // Draw right eye region
+    this.drawEyeRegion(this.eyeTrackingData.rightEye, '#0000ff');
+  }
+
+  private drawEyeRegion(eye: any, color: string): void {
+    if (!this.ctx) return;
+
+    const canvasWidth = this.ctx.canvas.width;
+    const canvasHeight = this.ctx.canvas.height;
+
+    // Draw eye bounds
+    this.ctx.strokeStyle = color;
+    this.ctx.lineWidth = 2;
+    this.ctx.strokeRect(
+      eye.bounds.x * canvasWidth,
+      eye.bounds.y * canvasHeight,
+      eye.bounds.width * canvasWidth,
+      eye.bounds.height * canvasHeight
+    );
+
+    // Draw eye center
+    this.ctx.fillStyle = color;
+    this.ctx.beginPath();
+    this.ctx.arc(
+      eye.center.x * canvasWidth,
+      eye.center.y * canvasHeight,
+      3, 0, 2 * Math.PI
+    );
+    this.ctx.fill();
+
+    // Draw pupil position if available
+    if (eye.pupilPosition) {
+      this.ctx.fillStyle = '#ffffff';
+      this.ctx.beginPath();
+      this.ctx.arc(
+        eye.pupilPosition.x * canvasWidth,
+        eye.pupilPosition.y * canvasHeight,
+        2, 0, 2 * Math.PI
+      );
+      this.ctx.fill();
+    }
+  }
+
+  private updatePerformanceMetrics(): void {
+    this.performanceMetrics = this.enhancedEyeTracker.getPerformanceMetrics();
+    this.currentFps = this.performanceMetrics.fps;
+  }
+
+  /**
+   * Auto-collect calibration sample when eye tracking data is available
+   */
+  private autoCollectCalibrationSample(): void {
+    if (!this.isCalibrating || !this.eyeTrackingData || !this.advancedGazeResult) {
+      return;
+    }
+
+    // Create features from current eye tracking data
+    const features = this.createFeaturesFromEyeData(this.eyeTrackingData, this.advancedGazeResult);
+    
+    // Add calibration point
+    this.enhancedCalibrationService.addCalibrationPoint(
+      this.calibrationPoint.x,
+      this.calibrationPoint.y,
+      features,
+      window.innerWidth,
+      window.innerHeight,
+      {
+        stability: this.advancedGazeResult.confidence,
+        confidence: this.advancedGazeResult.confidence
+      }
+    ).then(success => {
+      if (success) {
+        console.log('Calibration sample added automatically');
+      }
+    }).catch(error => {
+      console.warn('Failed to add calibration sample:', error);
+    });
+  }
+
+  private startAutoCalibrationCollection() {
+    this.stopAutoCalibrationCollection(); // Clear any existing interval
+    
+    // Collect calibration samples every 100ms during calibration
+    this.autoCalibrationInterval = window.setInterval(() => {
+      this.autoCollectCalibrationSample();
+    }, 100);
+  }
+
+  private stopAutoCalibrationCollection() {
+    if (this.autoCalibrationInterval) {
+      clearInterval(this.autoCalibrationInterval);
+      this.autoCalibrationInterval = undefined;
+    }
+  }
+
+  /**
+   * Extract real features from frame processing result
+   */
+  private extractRealFeatures(frameResult: any, calibrationPoint: any): number[] {
+    const normalizedX = calibrationPoint.x / window.innerWidth;
+    const normalizedY = calibrationPoint.y / window.innerHeight;
+    
+    return [
+      normalizedX,
+      normalizedY,
+      frameResult.leftEyeballCenter?.[0] / window.innerWidth || normalizedX,
+      frameResult.leftEyeballCenter?.[1] / window.innerHeight || normalizedY,
+      frameResult.rightEyeballCenter?.[0] / window.innerWidth || normalizedX,
+      frameResult.rightEyeballCenter?.[1] / window.innerHeight || normalizedY,
+      frameResult.headPose?.yaw || 0,
+      frameResult.headPose?.pitch || 0,
+      frameResult.leftGazeVector?.[0] || 0,
+      frameResult.leftGazeVector?.[1] || 0
+    ];
+  }
+
+  /**
+   * Create feature vector from eye tracking data
+   */
+  private createFeaturesFromEyeData(eyeData: EyeTrackingData, gazeData: GazeCalculationResult): number[] {
+    return [
+      gazeData.pupilData.leftPupil.x,
+      gazeData.pupilData.leftPupil.y,
+      gazeData.pupilData.rightPupil.x,
+      gazeData.pupilData.rightPupil.y,
+      gazeData.headPose.yaw,
+      gazeData.headPose.pitch,
+      gazeData.headPose.roll,
+      gazeData.confidence,
+      eyeData.leftEye.isOpen ? 1 : 0,
+      eyeData.rightEye.isOpen ? 1 : 0
+    ];
+  }
+
+  getScreenPercentage(): string {
+    if (!this.gazePoint || this.gazePoint.x === 0 && this.gazePoint.y === 0) {
+      return 'ไม่ตรวจพบ';
+    }
+    
+    const xPercent = (this.gazePoint.x / window.innerWidth * 100).toFixed(1);
+    const yPercent = (this.gazePoint.y / window.innerHeight * 100).toFixed(1);
+    
+    return `${xPercent}% / ${yPercent}%`;
   }
 }

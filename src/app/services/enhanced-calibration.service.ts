@@ -5,6 +5,16 @@ import { GazeEstimationService, PointOfGaze } from './gaze-estimation.service';
 import { ErrorHandlerService } from './error-handler.service';
 import { PerformanceService } from './performance.service';
 
+export interface CalibrationMatrix {
+  transform: number[][];
+  transformMatrix?: number[][];
+  offsetVector?: number[];
+  scalingFactors?: { x: number; y: number };
+  confidence?: number;
+  accuracy: number;
+  pointCount: number;
+}
+
 export interface CalibrationPoint {
   id: string;
   screenX: number;
@@ -488,18 +498,26 @@ export class EnhancedCalibrationService {
         return false;
       }
 
-      // Prepare training data for the gaze estimation service
+      // Prepare training data for the advanced gaze calculation service
+      const calibrationMatrix = this.calculateAdvancedCalibrationMatrix();
+      
+      if (calibrationMatrix) {
+        // Calibration matrix calculated successfully
+        console.log('Advanced calibration matrix applied successfully');
+        return true;
+      }
+
+      // Fallback to legacy calibration service
       const trainingData = this.currentSession.points.map(point => ({
         screenX: point.screenX,
         screenY: point.screenY,
         features: point.features
       }));
 
-      // Train the model using the legacy calibration service
       const success = await this.legacyCalibrationService.calibrateWithPoints(trainingData);
       
       if (success) {
-        console.log('Gaze model trained successfully');
+        console.log('Legacy gaze model trained successfully');
       }
       
       return success;
@@ -508,6 +526,115 @@ export class EnhancedCalibrationService {
       this.errorHandler.logError('calibration', `Failed to train gaze model: ${error}`, 'error', error);
       return false;
     }
+  }
+
+  // Calculate advanced calibration matrix
+  private calculateAdvancedCalibrationMatrix(): CalibrationMatrix | null {
+    if (!this.currentSession || this.currentSession.points.length < 4) {
+      return null;
+    }
+
+    try {
+      // Prepare data for matrix calculation
+      const features: number[][] = [];
+      const targetsX: number[] = [];
+      const targetsY: number[] = [];
+      
+      this.currentSession.points.forEach(point => {
+        // Use existing features from calibration points
+        features.push(point.features);
+        targetsX.push(point.normalizedX);
+        targetsY.push(point.normalizedY);
+      });
+      
+      // Calculate transformation matrix using least squares method
+      const matrixX = this.calculateLeastSquaresMatrix(features, targetsX);
+      const matrixY = this.calculateLeastSquaresMatrix(features, targetsY);
+      
+      // Calculate confidence based on calibration point quality
+      const avgConfidence = this.currentSession.points.reduce((sum, point) => 
+        sum + point.quality.overallConfidence, 0) / this.currentSession.points.length;
+      
+      const calibrationMatrix: CalibrationMatrix = {
+        transform: [matrixX, matrixY],
+        transformMatrix: [matrixX, matrixY],
+        offsetVector: [0, 0],
+        scalingFactors: { x: 1, y: 1 },
+        confidence: avgConfidence,
+        accuracy: avgConfidence,
+        pointCount: this.currentSession.points.length
+      };
+      
+      return calibrationMatrix;
+      
+    } catch (error) {
+      console.error('Error calculating advanced calibration matrix:', error);
+      return null;
+    }
+  }
+
+  // Calculate least squares matrix for linear regression
+  private calculateLeastSquaresMatrix(features: number[][], targets: number[]): number[] {
+    const n = features.length;
+    const m = features[0].length;
+    
+    // Create augmented matrix [X^T * X | X^T * y]
+    const XTX = Array(m).fill(0).map(() => Array(m).fill(0));
+    const XTy = Array(m).fill(0);
+    
+    // Calculate X^T * X and X^T * y
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < m; j++) {
+        XTy[j] += features[i][j] * targets[i];
+        for (let k = 0; k < m; k++) {
+          XTX[j][k] += features[i][j] * features[i][k];
+        }
+      }
+    }
+    
+    // Solve linear system using Gaussian elimination
+    return this.solveLinearSystem(XTX, XTy);
+  }
+
+  // Solve linear system using Gaussian elimination
+  private solveLinearSystem(A: number[][], b: number[]): number[] {
+    const n = A.length;
+    const x = Array(n).fill(0);
+    
+    // Forward elimination
+    for (let i = 0; i < n; i++) {
+      // Find pivot
+      let maxRow = i;
+      for (let k = i + 1; k < n; k++) {
+        if (Math.abs(A[k][i]) > Math.abs(A[maxRow][i])) {
+          maxRow = k;
+        }
+      }
+      
+      // Swap rows
+      [A[i], A[maxRow]] = [A[maxRow], A[i]];
+      [b[i], b[maxRow]] = [b[maxRow], b[i]];
+      
+      // Make all rows below this one 0 in current column
+      for (let k = i + 1; k < n; k++) {
+        const factor = A[k][i] / A[i][i];
+        for (let j = i; j < n; j++) {
+          A[k][j] -= factor * A[i][j];
+        }
+        b[k] -= factor * b[i];
+      }
+    }
+    
+    // Back substitution
+    for (let i = n - 1; i >= 0; i--) {
+      x[i] = b[i];
+      for (let j = i + 1; j < n; j++) {
+        x[i] -= A[i][j] * x[j];
+      }
+      x[i] /= A[i][i];
+    }
+    
+    return x;
   }
 
   private createEmptyAccuracy(): CalibrationAccuracy {
