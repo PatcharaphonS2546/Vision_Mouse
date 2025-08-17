@@ -104,6 +104,9 @@ export class GazeEstimationService {
   private eyeballBuffer: {x: number, y: number, z: number}[] = [];
   private static readonly EYE_SMOOTH_WINDOW = 2;
 
+  // Expected feature dimensions tracking
+  private expectedFeatureDimension = 10; // Default to original
+
   constructor() { }
 
   // Fixed issues with data preparation, error handling, and smoothing logic.
@@ -116,6 +119,10 @@ export class GazeEstimationService {
       return;
     }
 
+    // Update expected feature dimension based on training data
+    this.expectedFeatureDimension = features[0]?.length || 10;
+    console.log(`📏 Updated expected feature dimension to: ${this.expectedFeatureDimension}`);
+
     // Validate and clean data
     const cleanFeatures: number[][] = [];
     const cleanTargetsX: number[] = [];
@@ -126,9 +133,9 @@ export class GazeEstimationService {
       const targetX = targetsX[i];
       const targetY = targetsY[i];
 
-      // Validate feature array
-      if (!Array.isArray(feature) || feature.length !== 10) {
-        console.warn(`Skipping invalid feature at index ${i}: expected array of length 10, got:`, feature);
+      // Validate feature array with dynamic dimension
+      if (!Array.isArray(feature) || feature.length !== this.expectedFeatureDimension) {
+        console.warn(`Skipping invalid feature at index ${i}: expected array of length ${this.expectedFeatureDimension}, got:`, feature?.length);
         continue;
       }
 
@@ -158,35 +165,24 @@ export class GazeEstimationService {
       return;
     }
 
-    // Prepare data for multivariate regression with polynomial features
-    const X = cleanFeatures.map(features => this.generatePolynomialFeatures(features));
+    // Use enhanced features directly (no polynomial expansion needed)
+    const X = cleanFeatures; // Features are already enhanced by calibration service
     const Y = cleanFeatures.map((_, i) => [cleanTargetsX[i], cleanTargetsY[i]]);
 
-    console.log('📊 Enhanced feature generation:');
-    console.log('  • Original features per sample:', cleanFeatures[0].length);
-    console.log('  • Polynomial features per sample:', X[0].length);
-    console.log('  • Feature expansion ratio:', (X[0].length / cleanFeatures[0].length).toFixed(1) + 'x');
+    console.log('📊 Enhanced feature usage:');
+    console.log('  • Enhanced features per sample:', cleanFeatures[0].length);
+    console.log('  • Features already enhanced by calibration service');
+    console.log('  • Training with', cleanFeatures.length, 'enhanced samples');
 
     try {
       const mlr = new MLR(X, Y);
       this.gazeModel.model = mlr;
       this.isTrained = true;
       console.log('✅ Enhanced multivariate regression model trained successfully with', cleanFeatures.length, 'samples.');
-      console.log('📈 Using polynomial features for better edge prediction');
+      console.log('📈 Using enhanced features from calibration service');
     } catch (e) {
       console.error('❌ Failed to train enhanced regression model:', e);
-      console.log('🔄 Falling back to simple linear features...');
-      
-      // Fallback to simple features
-      try {
-        const simpleMlr = new MLR(cleanFeatures, Y);
-        this.gazeModel.model = simpleMlr;
-        this.isTrained = true;
-        console.log('⚠️ Fallback linear model trained successfully');
-      } catch (fallbackError) {
-        console.error('❌ Both enhanced and fallback training failed:', fallbackError);
-        this.resetModel();
-      }
+      this.resetModel();
     }
   }
 
@@ -201,19 +197,15 @@ export class GazeEstimationService {
       return null;
     }
 
-    // Expect 10 features
-    const expectedLength = 10;
-    if (currentFeatures.length !== expectedLength) {
-      console.warn(`[Gaze Prediction] Skipped: Feature length mismatch (expected ${expectedLength}, got ${currentFeatures.length})`);
+    // Check feature dimension (now dynamic based on training)
+    if (currentFeatures.length !== this.expectedFeatureDimension) {
+      console.warn(`[Gaze Prediction] Skipped: Feature length mismatch (expected ${this.expectedFeatureDimension}, got ${currentFeatures.length})`);
       return null;
     }
 
     try {
-      // Generate polynomial features for prediction (matching training data format)
-      const enhancedFeatures = this.generatePolynomialFeatures(currentFeatures);
-      
-      // Make prediction with enhanced features
-      const prediction = this.gazeModel.model.predict(enhancedFeatures);
+      // Use features directly (no polynomial enhancement since they're already enhanced by calibration service)
+      const prediction = this.gazeModel.model.predict(currentFeatures);
 
       if (!Array.isArray(prediction) || prediction.length < 2) {
         console.warn('[Gaze Prediction] Failed: Unexpected prediction format.', prediction);

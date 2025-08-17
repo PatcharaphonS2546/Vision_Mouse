@@ -109,6 +109,72 @@ export interface CalibrationAccuracy {
   timestamp?: number; // When accuracy was calculated
 }
 
+// Step 1: Data Quality Enhancement Interfaces
+export interface DataQualityMetrics {
+  frameConfidence: number; // 0-1
+  landmarkQuality: number; // 0-1
+  outlierScore: number; // 0-1 (higher = more outlier-like)
+  temporalStability: number; // 0-1
+  environmentalScore: number; // 0-1
+  overallQuality: number; // 0-1
+}
+
+export interface QualityFilterConfig {
+  minFrameConfidence: number;
+  minLandmarkQuality: number;
+  maxOutlierScore: number;
+  minTemporalStability: number;
+  enableOutlierRemoval: boolean;
+  enableQualityWeighting: boolean;
+  outlierRemovalMethod: 'zscore' | 'iqr' | 'isolation';
+}
+
+export interface SampleBalancingConfig {
+  enableGridBalancing: boolean;
+  minSamplesPerRegion: number;
+  maxDistanceFromTarget: number; // pixels
+  balancingStrategy: 'uniform' | 'adaptive' | 'weighted';
+}
+
+// Step 2: Feature Engineering Enhancement Interfaces
+export interface FeatureNormalizationConfig {
+  enableFeatureNormalization: boolean;
+  enableScreenSizeNormalization: boolean;
+  enableZScoreNormalization: boolean;
+  enableMinMaxNormalization: boolean;
+  normalizationMethod: 'zscore' | 'minmax' | 'robust';
+  preserveOriginalFeatures: boolean;
+}
+
+export interface FeatureAugmentationConfig {
+  enableHeadPoseFeatures: boolean;
+  enableEyeDistanceFeatures: boolean;
+  enablePupilSizeFeatures: boolean;
+  enableBlinkRateFeatures: boolean;
+  enableFacialSymmetryFeatures: boolean;
+  enableTemporalFeatures: boolean;
+  featureWindowSize: number; // for temporal features
+}
+
+export interface EnhancedFeatures {
+  originalFeatures: number[];
+  normalizedFeatures: number[];
+  augmentedFeatures: number[];
+  temporalFeatures: number[];
+  combinedFeatures: number[];
+  featureWeights: number[];
+  featureImportance: number[];
+}
+
+export interface TemporalFeatureConfig {
+  windowSize: number; // number of previous samples
+  enableMovingAverage: boolean;
+  enableMedianFiltering: boolean;
+  enableTrendAnalysis: boolean;
+  enableVelocityFeatures: boolean;
+  enableAccelerationFeatures: boolean;
+}
+
 export interface CalibrationSettings {
   pointPattern: 'grid' | 'random' | 'adaptive';
   pointCount: number;
@@ -162,6 +228,53 @@ export class EnhancedCalibrationService {
     intelligentSampleCollection: true
   };
 
+  // Step 1: Data Quality Enhancement Configuration
+  private qualityFilterConfig: QualityFilterConfig = {
+    minFrameConfidence: 0.7,    // Lowered from 0.85 to 0.7
+    minLandmarkQuality: 0.7,    // Lowered from 0.8 to 0.7
+    maxOutlierScore: 0.5,       // Raised from 0.3 to 0.5 (more lenient)
+    minTemporalStability: 0.55,  // Lowered from 0.75 to 0.55
+    enableOutlierRemoval: true,
+    enableQualityWeighting: true,
+    outlierRemovalMethod: 'zscore'
+  };
+
+  private sampleBalancingConfig: SampleBalancingConfig = {
+    enableGridBalancing: true,
+    minSamplesPerRegion: 2,
+    maxDistanceFromTarget: 50, // pixels
+    balancingStrategy: 'adaptive'
+  };
+
+  // Step 2: Feature Engineering Enhancement Configuration
+  private featureNormalizationConfig: FeatureNormalizationConfig = {
+    enableFeatureNormalization: true,
+    enableScreenSizeNormalization: true,
+    enableZScoreNormalization: true,
+    enableMinMaxNormalization: false,
+    normalizationMethod: 'zscore',
+    preserveOriginalFeatures: true
+  };
+
+  private featureAugmentationConfig: FeatureAugmentationConfig = {
+    enableHeadPoseFeatures: true,
+    enableEyeDistanceFeatures: true,
+    enablePupilSizeFeatures: true,
+    enableBlinkRateFeatures: false, // Keep false for now
+    enableFacialSymmetryFeatures: true,
+    enableTemporalFeatures: true,
+    featureWindowSize: 5
+  };
+
+  private temporalFeatureConfig: TemporalFeatureConfig = {
+    windowSize: 5,
+    enableMovingAverage: true,
+    enableMedianFiltering: true,
+    enableTrendAnalysis: false, // Keep simple for now
+    enableVelocityFeatures: false,
+    enableAccelerationFeatures: false
+  };
+
   private intelligentSampling: IntelligentSampleCollection = {
     enableOutlierDetection: true,
     enableQualityFiltering: true,
@@ -212,6 +325,10 @@ export class EnhancedCalibrationService {
   // Sample quality tracking
   private sampleQualityHistory: { pointId: string, quality: number, timestamp: number }[] = [];
   private retryAttempts: Map<string, number> = new Map();
+  
+  // Step 2: Feature Engineering temporal tracking
+  private featureHistory: { features: number[], timestamp: number, pointId?: string }[] = [];
+  private normalizedFeatureStats: { mean: number[], std: number[], min: number[], max: number[] } | null = null;
   
   // Default settings
   private defaultSettings: CalibrationSettings = {
@@ -1141,14 +1258,36 @@ export class EnhancedCalibrationService {
       return this.createEmptyAccuracy();
     }
 
+    // STEP 1: Apply Data Quality Enhancement
+    console.log('🔍 STEP 1: Applying Data Quality Enhancement...');
+    
+    // Filter samples by quality metrics
+    const originalPoints = [...this.currentSession.points];
+    const filteredPoints = this.filterSamplesByQuality(originalPoints);
+    
+    // Balance samples across screen regions
+    const balancedPoints = this.balanceCalibrationSamples(filteredPoints);
+    
+    // STEP 2: Apply Feature Engineering Enhancement
+    console.log('� STEP 2: Applying Feature Engineering Enhancement...');
+    const enhancedPoints = this.applyFeatureEngineering(balancedPoints);
+    
+    console.log(`📊 Combined Enhancement Results:
+      • Original samples: ${originalPoints.length}
+      • After quality filtering: ${filteredPoints.length}
+      • After balancing: ${balancedPoints.length}
+      • After feature engineering: ${enhancedPoints.length}
+      • Quality improvement: ${((enhancedPoints.length / originalPoints.length) * 100).toFixed(1)}% samples retained
+      • Feature enhancement: ${originalPoints[0]?.features.length || 0} → ${enhancedPoints[0]?.features.length || 0} features`);
+
     const errors: number[] = [];
     let realPredictions = 0;
     let mockPredictions = 0;
     
-    console.log('🧮 Starting real accuracy calculation with', this.currentSession.points.length, 'calibration points');
+    console.log('🧮 Starting real accuracy calculation with', enhancedPoints.length, 'enhanced high-quality calibration points');
     
     // Test each calibration point against the trained model
-    for (const point of this.currentSession.points) {
+    for (const point of enhancedPoints) {
       try {
         const predictedGaze = this.gazeEstimationService.predictGaze(point.features);
         if (predictedGaze && typeof predictedGaze.x === 'number' && typeof predictedGaze.y === 'number') {
@@ -1187,11 +1326,12 @@ export class EnhancedCalibrationService {
     // More realistic accuracy calculation
     const accuracy = Math.max(0, Math.min(1, 1 - (averageError * 2))); // Penalize errors more heavily
     
-    console.log('📊 Real Accuracy Calculation Results:');
-    console.log(`  • Real predictions: ${realPredictions}/${this.currentSession.points.length}`);
-    console.log(`  • Mock predictions: ${mockPredictions}/${this.currentSession.points.length}`);
+    console.log('📊 Real Accuracy Calculation Results (with Quality & Feature Enhancement):');
+    console.log(`  • Real predictions: ${realPredictions}/${enhancedPoints.length}`);
+    console.log(`  • Mock predictions: ${mockPredictions}/${enhancedPoints.length}`);
     console.log(`  • Average error: ${(averageError * 1000).toFixed(1)}px (${(averageError * 100).toFixed(1)}% of screen)`);
     console.log(`  • Real accuracy: ${(accuracy * 100).toFixed(1)}%`);
+    console.log(`  • Enhanced samples used: ${enhancedPoints.length}/${originalPoints.length}`);
     
     if (mockPredictions > realPredictions) {
       console.warn('⚠️ Warning: More mock predictions than real predictions suggests calibration data quality issues!');
@@ -1202,7 +1342,10 @@ export class EnhancedCalibrationService {
       standardDeviation: standardDeviation * 1000,
       maxError: maxError * 1000,
       minError: minError * 1000,
-      accuracy
+      accuracy,
+      pointCount: originalPoints.length,
+      validPoints: enhancedPoints.length,
+      timestamp: Date.now()
     };
   }
 
@@ -1215,29 +1358,43 @@ export class EnhancedCalibrationService {
 
       console.log('Training gaze model with', this.currentSession.points.length, 'calibration points');
 
-      // Prepare training data for GazeEstimationService
+      // APPLY SAME ENHANCEMENT PIPELINE AS ACCURACY CALCULATION
+      // Step 1: Quality filtering and balancing
+      const originalPoints = [...this.currentSession.points];
+      const filteredPoints = this.filterSamplesByQuality(originalPoints);
+      const balancedPoints = this.balanceCalibrationSamples(filteredPoints);
+      
+      // Step 2: Feature engineering
+      const enhancedPoints = this.applyFeatureEngineering(balancedPoints);
+      
+      console.log(`🔧 Training with enhanced features:
+        • Original samples: ${originalPoints.length}
+        • Enhanced samples: ${enhancedPoints.length}
+        • Feature dimensions: ${originalPoints[0]?.features.length || 0} → ${enhancedPoints[0]?.features.length || 0}`);
+
+      // Prepare training data for GazeEstimationService using ENHANCED features
       const features: number[][] = [];
       const targetsX: number[] = [];
       const targetsY: number[] = [];
       
-      this.currentSession.points.forEach(point => {
-        features.push(point.features);
+      enhancedPoints.forEach(point => {
+        features.push(point.features); // These are now enhanced features
         // Convert screen coordinates to normalized coordinates (0-1)
         targetsX.push(point.screenX / window.innerWidth);
         targetsY.push(point.screenY / window.innerHeight);
       });
 
-      // Train the gaze estimation model directly
+      // Train the gaze estimation model directly with enhanced features
       this.gazeEstimationService.trainModel(features, targetsX, targetsY);
       
       // Check if training was successful
       const isModelTrained = this.gazeEstimationService.isModelTrained();
       
       if (isModelTrained) {
-        console.log('✅ Gaze estimation model trained successfully with real calibration data!');
-        console.log('📊 Training Summary:');
-        console.log('  • Features:', features.length, 'samples');
-        console.log('  • Feature dimensions:', features[0]?.length);
+        console.log('✅ Gaze estimation model trained successfully with ENHANCED calibration data!');
+        console.log('📊 Enhanced Training Summary:');
+        console.log('  • Enhanced features:', features.length, 'samples');
+        console.log('  • Enhanced feature dimensions:', features[0]?.length);
         console.log('  • Screen targets X range:', Math.min(...targetsX).toFixed(3), '-', Math.max(...targetsX).toFixed(3));
         console.log('  • Screen targets Y range:', Math.min(...targetsY).toFixed(3), '-', Math.max(...targetsY).toFixed(3));
         
@@ -1397,5 +1554,699 @@ export class EnhancedCalibrationService {
       minError: 0,
       accuracy: 0
     };
+  }
+
+  // ===== STEP 1: DATA QUALITY ENHANCEMENT METHODS =====
+
+  /**
+   * Assess data quality metrics for a calibration sample
+   */
+  private assessDataQuality(
+    features: number[], 
+    faceQuality: any,
+    gazeResult?: any
+  ): DataQualityMetrics {
+    // Use more realistic default values based on actual calibration data
+    const frameConfidence = gazeResult?.confidence || faceQuality?.overallConfidence || 0.7;
+    const landmarkQuality = faceQuality?.eyeTracking || 0.7;
+    
+    // Calculate outlier score based on feature distribution
+    const outlierScore = this.calculateOutlierScore(features);
+    
+    // Temporal stability from gaze smoothness
+    const temporalStability = gazeResult?.stability || faceQuality?.headStability || 0.6;
+    
+    // Environmental score based on lighting and face detection
+    const environmentalScore = this.assessEnvironmentalConditions(faceQuality);
+    
+    // Overall quality weighted average
+    const overallQuality = (
+      frameConfidence * 0.25 +
+      landmarkQuality * 0.3 +
+      (1 - outlierScore) * 0.2 +
+      temporalStability * 0.15 +
+      environmentalScore * 0.1
+    );
+
+    return {
+      frameConfidence,
+      landmarkQuality,
+      outlierScore,
+      temporalStability,
+      environmentalScore,
+      overallQuality
+    };
+  }
+
+  /**
+   * Calculate outlier score using z-score method
+   */
+  private calculateOutlierScore(features: number[]): number {
+    if (!features || features.length === 0) return 1.0;
+    
+    // Calculate mean and standard deviation
+    const mean = features.reduce((sum, val) => sum + val, 0) / features.length;
+    const variance = features.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / features.length;
+    const stdDev = Math.sqrt(variance);
+    
+    if (stdDev === 0) return 0;
+    
+    // Calculate max z-score across all features
+    const maxZScore = Math.max(...features.map(val => Math.abs(val - mean) / stdDev));
+    
+    // Convert z-score to outlier probability (0-1)
+    return Math.min(maxZScore / 3.0, 1.0); // z-score > 3 = high outlier probability
+  }
+
+  /**
+   * Assess environmental conditions for calibration
+   */
+  private assessEnvironmentalConditions(faceQuality: any): number {
+    let score = 0.8; // baseline
+    
+    // Adjust based on face detection quality
+    if (faceQuality?.faceDetected) {
+      score += 0.1;
+    }
+    
+    // Adjust based on lighting conditions
+    if (faceQuality?.lighting === 'good') {
+      score += 0.05;
+    } else if (faceQuality?.lighting === 'poor') {
+      score -= 0.1;
+    }
+    
+    // Adjust based on glasses/glare
+    if (faceQuality?.glareDetected) {
+      score -= 0.05;
+    }
+    
+    return Math.max(0, Math.min(1, score));
+  }
+
+  /**
+   * Filter calibration samples based on quality metrics
+   */
+  private filterSamplesByQuality(
+    calibrationPoints: CalibrationPoint[]
+  ): CalibrationPoint[] {
+    console.log(`🔍 Step 1: Filtering ${calibrationPoints.length} samples by quality...`);
+    
+    if (!this.qualityFilterConfig.enableOutlierRemoval) {
+      console.log('📊 Quality filtering disabled - returning all samples');
+      return calibrationPoints;
+    }
+
+    const originalCount = calibrationPoints.length;
+    let filteredPoints = [...calibrationPoints]; // Start with all points
+
+    // Filter by frame confidence
+    const confidentFrames = calibrationPoints.filter((point, index) => {
+      const qualityMetrics = this.assessDataQuality(point.features, point.quality);
+      
+      // Debug logging for first few samples
+      if (index < 3) {
+        console.log(`🔬 Sample ${index + 1} quality:`, qualityMetrics);
+      }
+      
+      return qualityMetrics.frameConfidence >= this.qualityFilterConfig.minFrameConfidence;
+    });
+    
+    console.log(`📈 After frame confidence filter (≥${this.qualityFilterConfig.minFrameConfidence}): ${confidentFrames.length}/${originalCount}`);
+
+    // Filter by landmark quality
+    const qualityLandmarks = confidentFrames.filter(point => {
+      const qualityMetrics = this.assessDataQuality(point.features, point.quality);
+      return qualityMetrics.landmarkQuality >= this.qualityFilterConfig.minLandmarkQuality;
+    });
+    
+    console.log(`👁️ After landmark quality filter (≥${this.qualityFilterConfig.minLandmarkQuality}): ${qualityLandmarks.length}/${originalCount}`);
+
+    // Apply quality filtering only if we have enough samples remaining
+    if (qualityLandmarks.length >= Math.min(15, originalCount * 0.3)) {
+      filteredPoints = qualityLandmarks;
+    } else {
+      console.log(`⚠️ Quality filtering too aggressive - keeping all ${originalCount} samples`);
+      filteredPoints = calibrationPoints;
+    }
+
+    // Remove outliers (but ensure we keep at least 30% of original samples)
+    if (this.qualityFilterConfig.outlierRemovalMethod === 'zscore' && filteredPoints.length > 10) {
+      const withoutOutliers = this.removeOutliersZScore(filteredPoints);
+      if (withoutOutliers.length >= Math.min(10, originalCount * 0.3)) {
+        filteredPoints = withoutOutliers;
+      } else {
+        console.log(`⚠️ Outlier removal too aggressive - keeping filtered samples without outlier removal`);
+      }
+    }
+    
+    console.log(`🎯 After outlier removal: ${filteredPoints.length}/${originalCount}`);
+    console.log(`✅ Quality filtering complete - kept ${((filteredPoints.length / originalCount) * 100).toFixed(1)}% of samples`);
+    
+    return filteredPoints;
+  }
+
+  /**
+   * Remove outliers using z-score method
+   */
+  private removeOutliersZScore(points: CalibrationPoint[]): CalibrationPoint[] {
+    if (points.length < 3) return points; // Need minimum samples for statistical analysis
+    
+    // Calculate quality metrics for all points
+    const qualityScores = points.map(point => 
+      this.assessDataQuality(point.features, point.quality).overallQuality
+    );
+    
+    // Calculate mean and standard deviation
+    const mean = qualityScores.reduce((sum, score) => sum + score, 0) / qualityScores.length;
+    const variance = qualityScores.reduce((sum, score) => sum + Math.pow(score - mean, 2), 0) / qualityScores.length;
+    const stdDev = Math.sqrt(variance);
+    
+    if (stdDev === 0) return points; // All points have same quality
+    
+    // Filter points with z-score < 2 (within 2 standard deviations)
+    return points.filter((point, index) => {
+      const zScore = Math.abs(qualityScores[index] - mean) / stdDev;
+      return zScore < 2.0; // Keep points within 2 standard deviations
+    });
+  }
+
+  /**
+   * Balance calibration samples across screen regions
+   */
+  private balanceCalibrationSamples(points: CalibrationPoint[]): CalibrationPoint[] {
+    if (!this.sampleBalancingConfig.enableGridBalancing) {
+      return points;
+    }
+    
+    console.log(`🎯 Step 1: Balancing ${points.length} samples across screen regions...`);
+    
+    // Define screen regions (3x3 grid)
+    const regions = this.createScreenRegions();
+    const balancedPoints: CalibrationPoint[] = [];
+    
+    // Group points by region
+    const pointsByRegion = this.groupPointsByRegion(points, regions);
+    
+    // Ensure minimum samples per region
+    for (let regionId = 0; regionId < regions.length; regionId++) {
+      const regionPoints = pointsByRegion[regionId] || [];
+      
+      if (regionPoints.length >= this.sampleBalancingConfig.minSamplesPerRegion) {
+        // Take best quality samples from this region
+        const sortedByQuality = regionPoints.sort((a, b) => 
+          b.quality.overallConfidence - a.quality.overallConfidence
+        );
+        balancedPoints.push(...sortedByQuality.slice(0, Math.max(
+          this.sampleBalancingConfig.minSamplesPerRegion,
+          Math.min(regionPoints.length, 8) // Cap at 8 samples per region
+        )));
+      } else if (regionPoints.length > 0) {
+        // Include all samples from regions with few samples
+        balancedPoints.push(...regionPoints);
+      }
+    }
+    
+    console.log(`⚖️ Sample balancing complete: ${balancedPoints.length} samples selected`);
+    return balancedPoints;
+  }
+
+  /**
+   * Create 3x3 screen regions for sample balancing
+   */
+  private createScreenRegions(): { minX: number; maxX: number; minY: number; maxY: number }[] {
+    const regions = [];
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 3; col++) {
+        regions.push({
+          minX: col / 3,
+          maxX: (col + 1) / 3,
+          minY: row / 3,
+          maxY: (row + 1) / 3
+        });
+      }
+    }
+    return regions;
+  }
+
+  /**
+   * Group calibration points by screen region
+   */
+  private groupPointsByRegion(
+    points: CalibrationPoint[], 
+    regions: { minX: number; maxX: number; minY: number; maxY: number }[]
+  ): CalibrationPoint[][] {
+    const pointsByRegion: CalibrationPoint[][] = Array(regions.length).fill(null).map(() => []);
+    
+    points.forEach(point => {
+      const regionIndex = regions.findIndex(region => 
+        point.normalizedX >= region.minX && point.normalizedX < region.maxX &&
+        point.normalizedY >= region.minY && point.normalizedY < region.maxY
+      );
+      
+      if (regionIndex !== -1) {
+        pointsByRegion[regionIndex].push(point);
+      }
+    });
+    
+    return pointsByRegion;
+  }
+
+  // ===== STEP 2: FEATURE ENGINEERING ENHANCEMENT METHODS =====
+
+  /**
+   * Apply comprehensive feature engineering to calibration points
+   */
+  private applyFeatureEngineering(calibrationPoints: CalibrationPoint[]): CalibrationPoint[] {
+    console.log(`🔧 Step 2: Applying Feature Engineering to ${calibrationPoints.length} samples...`);
+    
+    // Initialize normalization stats if not already done
+    if (!this.normalizedFeatureStats) {
+      this.calculateNormalizationStats(calibrationPoints);
+    }
+    
+    const enhancedPoints = calibrationPoints.map((point, index) => {
+      // 1. Normalize features
+      const normalizedFeatures = this.normalizeFeatures(point.features);
+      
+      // 2. Augment with additional features
+      const augmentedFeatures = this.augmentFeatures(point.features, point.quality);
+      
+      // 3. Add temporal features
+      const temporalFeatures = this.extractTemporalFeatures(point.features, index);
+      
+      // 4. Combine all features
+      const combinedFeatures = this.combineFeatures(
+        point.features,
+        normalizedFeatures,
+        augmentedFeatures,
+        temporalFeatures
+      );
+      
+      // Update point with enhanced features
+      const enhancedPoint: CalibrationPoint = {
+        ...point,
+        features: combinedFeatures
+      };
+      
+      // Add to feature history for temporal processing
+      this.featureHistory.push({
+        features: point.features,
+        timestamp: point.timestamp,
+        pointId: point.id
+      });
+      
+      return enhancedPoint;
+    });
+    
+    console.log(`✨ Feature Engineering Results:
+      • Original feature dimension: ${calibrationPoints[0]?.features.length || 0}
+      • Enhanced feature dimension: ${enhancedPoints[0]?.features.length || 0}
+      • Feature expansion ratio: ${((enhancedPoints[0]?.features.length || 0) / (calibrationPoints[0]?.features.length || 1)).toFixed(1)}x`);
+    
+    return enhancedPoints;
+  }
+
+  /**
+   * Calculate normalization statistics from all calibration points
+   */
+  private calculateNormalizationStats(points: CalibrationPoint[]): void {
+    if (points.length === 0) return;
+    
+    const featureDim = points[0].features.length;
+    const mean = new Array(featureDim).fill(0);
+    const std = new Array(featureDim).fill(0);
+    const min = new Array(featureDim).fill(Infinity);
+    const max = new Array(featureDim).fill(-Infinity);
+    
+    // Calculate mean, min, max
+    points.forEach(point => {
+      point.features.forEach((feature, i) => {
+        mean[i] += feature;
+        min[i] = Math.min(min[i], feature);
+        max[i] = Math.max(max[i], feature);
+      });
+    });
+    
+    // Finalize mean
+    mean.forEach((_, i) => {
+      mean[i] /= points.length;
+    });
+    
+    // Calculate standard deviation
+    points.forEach(point => {
+      point.features.forEach((feature, i) => {
+        std[i] += Math.pow(feature - mean[i], 2);
+      });
+    });
+    
+    std.forEach((_, i) => {
+      std[i] = Math.sqrt(std[i] / points.length);
+    });
+    
+    this.normalizedFeatureStats = { mean, std, min, max };
+    console.log(`📊 Normalization stats calculated for ${featureDim} features`);
+  }
+
+  /**
+   * Normalize features using configured method
+   */
+  private normalizeFeatures(features: number[]): number[] {
+    if (!this.featureNormalizationConfig.enableFeatureNormalization || !this.normalizedFeatureStats) {
+      return [...features];
+    }
+    
+    const { mean, std, min, max } = this.normalizedFeatureStats;
+    
+    return features.map((feature, i) => {
+      if (this.featureNormalizationConfig.normalizationMethod === 'zscore') {
+        return std[i] > 0 ? (feature - mean[i]) / std[i] : 0;
+      } else if (this.featureNormalizationConfig.normalizationMethod === 'minmax') {
+        const range = max[i] - min[i];
+        return range > 0 ? (feature - min[i]) / range : 0;
+      } else {
+        return feature;
+      }
+    });
+  }
+
+  /**
+   * Augment features with additional computed features
+   */
+  private augmentFeatures(originalFeatures: number[], quality: CalibrationQuality): number[] {
+    const augmented: number[] = [];
+    
+    if (this.featureAugmentationConfig.enableHeadPoseFeatures) {
+      // Estimate head pose from eye positions (simplified)
+      const headPoseYaw = this.estimateHeadPoseYaw(originalFeatures);
+      const headPosePitch = this.estimateHeadPosePitch(originalFeatures);
+      augmented.push(headPoseYaw, headPosePitch);
+    }
+    
+    if (this.featureAugmentationConfig.enableEyeDistanceFeatures) {
+      // Calculate inter-eye distance and eye-to-screen distance
+      const interEyeDistance = this.calculateInterEyeDistance(originalFeatures);
+      const eyeToScreenDistance = this.estimateEyeToScreenDistance(originalFeatures);
+      augmented.push(interEyeDistance, eyeToScreenDistance);
+    }
+    
+    if (this.featureAugmentationConfig.enablePupilSizeFeatures) {
+      // Estimate pupil size variations
+      const pupilSize = this.estimatePupilSize(originalFeatures);
+      const pupilAsymmetry = this.calculatePupilAsymmetry(originalFeatures);
+      augmented.push(pupilSize, pupilAsymmetry);
+    }
+    
+    if (this.featureAugmentationConfig.enableFacialSymmetryFeatures) {
+      // Calculate facial symmetry metrics
+      const facialSymmetry = this.calculateFacialSymmetry(originalFeatures);
+      const eyeSymmetry = this.calculateEyeSymmetry(originalFeatures);
+      augmented.push(facialSymmetry, eyeSymmetry);
+    }
+    
+    // Add quality metrics as features
+    augmented.push(
+      quality.overallConfidence,
+      quality.eyeTracking,
+      quality.headStability
+    );
+    
+    return augmented;
+  }
+
+  /**
+   * Extract temporal features from feature history
+   */
+  private extractTemporalFeatures(currentFeatures: number[], currentIndex: number): number[] {
+    if (!this.featureAugmentationConfig.enableTemporalFeatures) {
+      return [];
+    }
+    
+    const temporal: number[] = [];
+    const windowSize = Math.min(this.temporalFeatureConfig.windowSize, this.featureHistory.length);
+    
+    if (windowSize < 2) {
+      // Not enough history, return zeros
+      return new Array(currentFeatures.length * 2).fill(0); // Moving average + median
+    }
+    
+    // Get recent feature history
+    const recentFeatures = this.featureHistory.slice(-windowSize).map(h => h.features);
+    
+    if (this.temporalFeatureConfig.enableMovingAverage) {
+      // Calculate moving average
+      const movingAvg = this.calculateMovingAverage(recentFeatures);
+      temporal.push(...movingAvg);
+    }
+    
+    if (this.temporalFeatureConfig.enableMedianFiltering) {
+      // Calculate median filter
+      const medianFiltered = this.calculateMedianFilter(recentFeatures);
+      temporal.push(...medianFiltered);
+    }
+    
+    return temporal;
+  }
+
+  /**
+   * Combine all feature types into final feature vector
+   */
+  private combineFeatures(
+    original: number[],
+    normalized: number[],
+    augmented: number[],
+    temporal: number[]
+  ): number[] {
+    const combined: number[] = [];
+    
+    // Always include original features
+    combined.push(...original);
+    
+    if (this.featureNormalizationConfig.enableFeatureNormalization) {
+      combined.push(...normalized);
+    }
+    
+    if (augmented.length > 0) {
+      combined.push(...augmented);
+    }
+    
+    if (temporal.length > 0) {
+      combined.push(...temporal);
+    }
+    
+    return combined;
+  }
+
+  // ===== FEATURE COMPUTATION HELPER METHODS =====
+
+  private estimateHeadPoseYaw(features: number[]): number {
+    // Simplified head pose estimation from eye landmarks
+    if (features.length < 4) return 0;
+    const leftEyeX = features[0] || 0;
+    const rightEyeX = features[2] || 0;
+    return (rightEyeX - leftEyeX) * 0.1; // Normalized yaw estimate
+  }
+
+  private estimateHeadPosePitch(features: number[]): number {
+    if (features.length < 4) return 0;
+    const leftEyeY = features[1] || 0;
+    const rightEyeY = features[3] || 0;
+    return ((leftEyeY + rightEyeY) / 2 - 0.5) * 0.2; // Normalized pitch estimate
+  }
+
+  private calculateInterEyeDistance(features: number[]): number {
+    if (features.length < 4) return 0.1; // Default distance
+    const leftEyeX = features[0] || 0;
+    const leftEyeY = features[1] || 0;
+    const rightEyeX = features[2] || 0;
+    const rightEyeY = features[3] || 0;
+    return Math.sqrt(Math.pow(rightEyeX - leftEyeX, 2) + Math.pow(rightEyeY - leftEyeY, 2));
+  }
+
+  private estimateEyeToScreenDistance(features: number[]): number {
+    // Estimate based on eye size in the image
+    const interEyeDist = this.calculateInterEyeDistance(features);
+    return Math.max(0.1, Math.min(2.0, 0.15 / Math.max(interEyeDist, 0.01))); // Inverse relationship
+  }
+
+  private estimatePupilSize(features: number[]): number {
+    // Simplified pupil size estimation
+    return features.length > 8 ? (features[8] || 0.5) : 0.5;
+  }
+
+  private calculatePupilAsymmetry(features: number[]): number {
+    // Calculate difference between left and right pupil sizes
+    if (features.length < 10) return 0;
+    const leftPupil = features[8] || 0.5;
+    const rightPupil = features[9] || 0.5;
+    return Math.abs(leftPupil - rightPupil);
+  }
+
+  private calculateFacialSymmetry(features: number[]): number {
+    if (features.length < 4) return 1.0;
+    const leftEyeX = features[0] || 0;
+    const rightEyeX = features[2] || 0;
+    const centerX = (leftEyeX + rightEyeX) / 2;
+    const asymmetry = Math.abs(0.5 - centerX);
+    return Math.max(0, 1 - asymmetry * 4); // Higher score = more symmetric
+  }
+
+  private calculateEyeSymmetry(features: number[]): number {
+    if (features.length < 4) return 1.0;
+    const leftEyeY = features[1] || 0;
+    const rightEyeY = features[3] || 0;
+    const yDifference = Math.abs(leftEyeY - rightEyeY);
+    return Math.max(0, 1 - yDifference * 10); // Higher score = more symmetric
+  }
+
+  private calculateMovingAverage(featureMatrix: number[][]): number[] {
+    if (featureMatrix.length === 0) return [];
+    
+    const featureDim = featureMatrix[0].length;
+    const average = new Array(featureDim).fill(0);
+    
+    featureMatrix.forEach(features => {
+      features.forEach((feature, i) => {
+        average[i] += feature;
+      });
+    });
+    
+    return average.map(sum => sum / featureMatrix.length);
+  }
+
+  private calculateMedianFilter(featureMatrix: number[][]): number[] {
+    if (featureMatrix.length === 0) return [];
+    
+    const featureDim = featureMatrix[0].length;
+    const median = new Array(featureDim).fill(0);
+    
+    for (let i = 0; i < featureDim; i++) {
+      const values = featureMatrix.map(features => features[i]).sort((a, b) => a - b);
+      const mid = Math.floor(values.length / 2);
+      median[i] = values.length % 2 === 0 
+        ? (values[mid - 1] + values[mid]) / 2 
+        : values[mid];
+    }
+    
+    return median;
+  }
+
+  // ===== PUBLIC METHODS FOR REAL-TIME FEATURE ENHANCEMENT =====
+
+  /**
+   * Public method to enhance features for real-time prediction
+   * Used by gaze-estimation.service.ts when making predictions
+   */
+  public enhanceFeaturesForPrediction(originalFeatures: number[], quality?: any): number[] {
+    if (!this.featureNormalizationConfig.enableFeatureNormalization && 
+        !this.featureAugmentationConfig.enableHeadPoseFeatures) {
+      // Feature engineering disabled, return original features
+      return originalFeatures;
+    }
+
+    console.log(`🔧 Real-time feature enhancement: ${originalFeatures.length} → enhanced features`);
+    
+    // Use default quality if not provided
+    const defaultQuality = {
+      overallConfidence: 0.7,
+      eyeTracking: 0.7,
+      headStability: 0.7,
+      faceDetected: true
+    };
+    const safeQuality = quality || defaultQuality;
+
+    // 1. Normalize features (if stats available)
+    const normalizedFeatures = this.normalizeFeatures(originalFeatures);
+    
+    // 2. Augment with additional features
+    const augmentedFeatures = this.augmentFeatures(originalFeatures, safeQuality);
+    
+    // 3. Add temporal features (simplified for real-time)
+    const temporalFeatures = this.extractSimplifiedTemporalFeatures(originalFeatures);
+    
+    // 4. Combine all features
+    const enhancedFeatures = this.combineFeatures(
+      originalFeatures,
+      normalizedFeatures,
+      augmentedFeatures,
+      temporalFeatures
+    );
+
+    console.log(`✨ Real-time enhancement: ${originalFeatures.length} → ${enhancedFeatures.length} features`);
+    return enhancedFeatures;
+  }
+
+  /**
+   * Check if feature engineering is enabled for real-time prediction
+   */
+  public isFeatureEngineeringEnabled(): boolean {
+    return this.featureNormalizationConfig.enableFeatureNormalization || 
+           this.featureAugmentationConfig.enableHeadPoseFeatures ||
+           this.featureAugmentationConfig.enableTemporalFeatures;
+  }
+
+  /**
+   * Get expected feature dimension after enhancement
+   */
+  public getEnhancedFeatureDimension(): number {
+    if (!this.isFeatureEngineeringEnabled()) {
+      return 10; // Original feature dimension
+    }
+    
+    // Calculate expected dimension based on enabled features
+    let dimension = 10; // Original features
+    
+    if (this.featureNormalizationConfig.enableFeatureNormalization) {
+      dimension += 10; // Normalized features
+    }
+    
+    // Augmented features count
+    let augmentedCount = 0;
+    if (this.featureAugmentationConfig.enableHeadPoseFeatures) augmentedCount += 2;
+    if (this.featureAugmentationConfig.enableEyeDistanceFeatures) augmentedCount += 2;
+    if (this.featureAugmentationConfig.enablePupilSizeFeatures) augmentedCount += 2;
+    if (this.featureAugmentationConfig.enableFacialSymmetryFeatures) augmentedCount += 2;
+    augmentedCount += 3; // Quality features always added
+    dimension += augmentedCount;
+    
+    if (this.featureAugmentationConfig.enableTemporalFeatures) {
+      dimension += 20; // Temporal features (moving average + median)
+    }
+    
+    return dimension;
+  }
+
+  /**
+   * Simplified temporal features for real-time use
+   */
+  private extractSimplifiedTemporalFeatures(currentFeatures: number[]): number[] {
+    if (!this.featureAugmentationConfig.enableTemporalFeatures) {
+      return [];
+    }
+    
+    const windowSize = Math.min(3, this.featureHistory.length); // Smaller window for real-time
+    if (windowSize < 1) {
+      // No history, return zeros
+      return new Array(currentFeatures.length * 2).fill(0);
+    }
+    
+    // Get recent feature history (limited)
+    const recentFeatures = this.featureHistory.slice(-windowSize).map(h => h.features);
+    
+    const temporal: number[] = [];
+    
+    // Simple moving average
+    const movingAvg = this.calculateMovingAverage(recentFeatures);
+    temporal.push(...movingAvg);
+    
+    // Simple median (or use last value if only 1 sample)
+    if (recentFeatures.length === 1) {
+      temporal.push(...recentFeatures[0]);
+    } else {
+      const medianFiltered = this.calculateMedianFilter(recentFeatures);
+      temporal.push(...medianFiltered);
+    }
+    
+    return temporal;
   }
 }
