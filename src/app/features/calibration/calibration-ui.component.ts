@@ -1,6 +1,6 @@
 /**
- * Calibration Component - Enhanced with API Integration
- * Connects to Python backend for calibration processing
+ * Calibration Component - UI Only
+ * Simplified version for UI interaction, backend will handle calibration logic
  */
 
 import { Component, OnInit, OnDestroy } from '@angular/core';
@@ -8,16 +8,13 @@ import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { Subject, BehaviorSubject } from 'rxjs';
-import { takeUntil, catchError } from 'rxjs/operators';
-import { of } from 'rxjs';
+import { HttpClient } from '@angular/common/http';
 
 import { 
   StateService, 
   CameraService,
   ErrorHandlerService,
-  NotificationService,
-  CalibrationApiService,
-  WebSocketService
+  NotificationService
 } from '../../core/core.module';
 
 import { CalibrationStatus, CalibrationProgress, CalibrationResult, CalibrationPoint } from './calibration.interface';
@@ -31,36 +28,9 @@ import { Point2D, QualityLevel } from '../../core/interfaces/core.interface';
     <div class="calibration-container">
       <div class="calibration-header">
         <h2>การปรับจูนระบบ (Calibration)</h2>
-        <div class="status-group">
-          <div class="status-indicator" [ngClass]="'status-' + calibrationStatus">
-            <span class="status-dot"></span>
-            {{ getStatusText(calibrationStatus) }}
-          </div>
-          <div class="backend-status" [ngClass]="{'connected': backendConnected, 'disconnected': !backendConnected}">
-            <span class="connection-dot"></span>
-            {{ backendConnected ? 'เชื่อมต่อ Backend' : 'ใช้ข้อมูล Mock' }}
-          </div>
-        </div>
-      </div>
-
-      <!-- Real-time Data Display -->
-      <div *ngIf="liveCalibrationData" class="live-data-section">
-        <h3>ข้อมูลจาก Backend (Real-time)</h3>
-        <div class="live-data-grid">
-          <div class="data-item" *ngIf="liveCalibrationData.gazePoint">
-            <label>Gaze Point:</label>
-            <span>X: {{liveCalibrationData.gazePoint.x | number:'1.1-2'}}, Y: {{liveCalibrationData.gazePoint.y | number:'1.1-2'}}</span>
-          </div>
-          <div class="data-item" *ngIf="liveCalibrationData.confidence">
-            <label>Confidence:</label>
-            <span>{{(liveCalibrationData.confidence * 100) | number:'1.1-1'}}%</span>
-          </div>
-          <div class="data-item" *ngIf="liveCalibrationData.eyeDetected !== undefined">
-            <label>Eye Detection:</label>
-            <span class="status-badge" [ngClass]="liveCalibrationData.eyeDetected ? 'success' : 'warning'">
-              {{liveCalibrationData.eyeDetected ? 'ตรวจพบดวงตา' : 'ไม่พบดวงตา'}}
-            </span>
-          </div>
+        <div class="status-indicator" [ngClass]="'status-' + calibrationStatus">
+          <span class="status-dot"></span>
+          {{ getStatusText(calibrationStatus) }}
         </div>
       </div>
 
@@ -83,8 +53,7 @@ import { Point2D, QualityLevel } from '../../core/interfaces/core.interface';
           class="btn-primary btn-start-calibration"
           [disabled]="!canStartCalibration"
           (click)="startCalibration()">
-          <span *ngIf="backendConnected">เริ่มการปรับจูน (API)</span>
-          <span *ngIf="!backendConnected">เริ่มการปรับจูน (Demo)</span>
+          เริ่มการปรับจูน
         </button>
         
         <button 
@@ -107,9 +76,6 @@ import { Point2D, QualityLevel } from '../../core/interfaces/core.interface';
             <span *ngIf="currentProgress.estimatedTimeRemaining > 0">
               เหลือเวลา: {{ currentProgress.estimatedTimeRemaining }}s
             </span>
-            <span *ngIf="currentProgress.collectedSamples !== undefined">
-              ตัวอย่าง: {{ currentProgress.collectedSamples }} / {{ currentProgress.requiredSamples }}
-            </span>
           </div>
         </div>
       </div>
@@ -125,8 +91,8 @@ import { Point2D, QualityLevel } from '../../core/interfaces/core.interface';
             </div>
             <div class="metric">
               <label>คุณภาพ:</label>
-              <span class="quality-badge" [ngClass]="'quality-' + (lastResult.quality || 'unknown')">
-                {{ getQualityText(lastResult.quality || 'unknown') }}
+              <span class="quality-badge" [ngClass]="'quality-' + lastResult.quality">
+                {{ getQualityText(lastResult.quality) }}
               </span>
             </div>
             <div class="metric">
@@ -148,17 +114,10 @@ import { Point2D, QualityLevel } from '../../core/interfaces/core.interface';
     .calibration-header {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
+      align-items: center;
       margin-bottom: 1rem;
       padding-bottom: 1rem;
       border-bottom: 1px solid #e0e0e0;
-    }
-
-    .status-group {
-      display: flex;
-      flex-direction: column;
-      gap: 0.5rem;
-      align-items: flex-end;
     }
 
     .status-indicator {
@@ -168,91 +127,6 @@ import { Point2D, QualityLevel } from '../../core/interfaces/core.interface';
       padding: 0.5rem 1rem;
       border-radius: 20px;
       font-weight: 500;
-    }
-
-    .backend-status {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.25rem 0.75rem;
-      border-radius: 15px;
-      font-size: 0.85rem;
-      font-weight: 500;
-    }
-
-    .backend-status.connected {
-      background: #d1e7dd;
-      color: #0f5132;
-    }
-
-    .backend-status.disconnected {
-      background: #fff3cd;
-      color: #856404;
-    }
-
-    .connection-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: currentColor;
-    }
-
-    .live-data-section {
-      background: #f8f9fa;
-      border: 1px solid #dee2e6;
-      border-radius: 8px;
-      padding: 1rem;
-      margin-bottom: 1rem;
-    }
-
-    .live-data-section h3 {
-      margin: 0 0 0.75rem 0;
-      color: #495057;
-      font-size: 1rem;
-    }
-
-    .live-data-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 0.75rem;
-    }
-
-    .data-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 0.5rem;
-      background: white;
-      border-radius: 4px;
-      border: 1px solid #e9ecef;
-    }
-
-    .data-item label {
-      font-weight: 500;
-      color: #6c757d;
-      font-size: 0.9rem;
-    }
-
-    .data-item span {
-      font-weight: 600;
-      color: #212529;
-    }
-
-    .status-badge {
-      padding: 0.25rem 0.5rem;
-      border-radius: 12px;
-      font-size: 0.8rem;
-      font-weight: 500;
-    }
-
-    .status-badge.success {
-      background: #d1e7dd;
-      color: #0f5132;
-    }
-
-    .status-badge.warning {
-      background: #fff3cd;
-      color: #856404;
     }
 
     .status-idle { background: #f5f5f5; color: #666; }
@@ -423,10 +297,6 @@ export class CalibrationComponent implements OnInit, OnDestroy {
   cameraReady = false;
   canStartCalibration = false;
   
-  // Real-time data from backend
-  backendConnected = false;
-  liveCalibrationData: any = null;
-  
   // Enum reference for template
   CalibrationStatus = CalibrationStatus;
 
@@ -435,77 +305,26 @@ export class CalibrationComponent implements OnInit, OnDestroy {
     private cameraService: CameraService,
     private errorHandler: ErrorHandlerService,
     private notifications: NotificationService,
-    private calibrationApi: CalibrationApiService,
-    private websocketService: WebSocketService
+    private http: HttpClient
   ) {}
 
   ngOnInit() {
     this.initializeComponent();
-    this.setupWebSocketConnection();
-    this.setupAPIEventListeners();
   }
 
   ngOnDestroy() {
     this.destroy$.next();
     this.destroy$.complete();
-    this.websocketService.disconnect();
   }
 
   private async initializeComponent() {
     try {
       console.log('Initializing calibration component...');
       await this.checkCameraStatus();
-      await this.checkBackendConnection();
       console.log('Component initialized');
     } catch (error) {
       this.errorHandler.handleError(error as Error, 'Failed to initialize calibration component');
     }
-  }
-
-  private async checkBackendConnection() {
-    try {
-      // Test API connection
-      const health = await this.calibrationApi.getCalibrationStatus()
-        .pipe(takeUntil(this.destroy$))
-        .toPromise();
-      
-      this.backendConnected = true;
-      console.log('Backend connected successfully');
-    } catch (error) {
-      this.backendConnected = false;
-      console.warn('Backend not available, using mock data');
-    }
-  }
-
-  private setupWebSocketConnection() {
-    // Connect to WebSocket for real-time updates
-    this.websocketService.connect()
-      .pipe(takeUntil(this.destroy$))
-      .subscribe({
-        next: (message) => {
-          console.log('WebSocket message received:', message);
-        },
-        error: (error) => {
-          console.warn('WebSocket connection failed:', error);
-        }
-      });
-
-    // Listen for calibration updates
-    this.websocketService.onCalibrationUpdate()
-      .pipe(takeUntil(this.destroy$))
-      .subscribe(data => {
-        this.liveCalibrationData = data;
-        this.updateCalibrationProgress(data);
-      });
-  }
-
-  private setupAPIEventListeners() {
-    // Monitor WebSocket connection status
-    this.websocketService.getConnectionStatus()
-      .pipe(takeUntil(this.destroy$))
-      .subscribe(status => {
-        console.log('WebSocket status:', status);
-      });
   }
 
   private async checkCameraStatus() {
@@ -533,33 +352,10 @@ export class CalibrationComponent implements OnInit, OnDestroy {
       this.calibrationStatus = CalibrationStatus.INITIALIZING;
       this.notifications.showInfo('เริ่มการปรับจูนระบบ');
       
-      if (this.backendConnected) {
-        // Call backend API
-        const config = {
-          pointCount: 9,
-          duration: 2000,
-          screenResolution: { 
-            width: window.screen.width, 
-            height: window.screen.height 
-          }
-        };
-
-        const response = await this.calibrationApi.startCalibration(config)
-          .pipe(
-            takeUntil(this.destroy$),
-            catchError(error => {
-              console.error('API call failed, using mock data:', error);
-              return of(null);
-            })
-          )
-          .toPromise();
-
-        if (response) {
-          console.log('Calibration started on backend:', response);
-        }
-      }
+      // TODO: Call backend API
+      // const response = await this.http.post('/api/calibration/start', {}).toPromise();
       
-      // Initialize progress
+      // Mock progress for demo
       this.currentProgress = {
         currentStep: 1,
         totalSteps: 9,
@@ -574,7 +370,7 @@ export class CalibrationComponent implements OnInit, OnDestroy {
       
       this.calibrationStatus = CalibrationStatus.COLLECTING;
       
-      // Start calibration process
+      // Simulate calibration process
       this.simulateCalibrationProcess();
       
     } catch (error) {
@@ -585,63 +381,16 @@ export class CalibrationComponent implements OnInit, OnDestroy {
 
   async resetCalibration() {
     try {
-      if (this.backendConnected) {
-        // Call backend API to reset
-        await this.calibrationApi.resetCalibration()
-          .pipe(
-            takeUntil(this.destroy$),
-            catchError(error => {
-              console.error('Reset API call failed:', error);
-              return of(null);
-            })
-          )
-          .toPromise();
-      }
+      // TODO: Call backend API to reset
+      // await this.http.post('/api/calibration/reset', {}).toPromise();
       
       this.calibrationStatus = CalibrationStatus.IDLE;
       this.currentProgress = null;
       this.lastResult = null;
-      this.liveCalibrationData = null;
       this.notifications.showInfo('รีเซ็ตการปรับจูนเรียบร้อย');
       
     } catch (error) {
       this.errorHandler.handleError(error as Error, 'Failed to reset calibration');
-    }
-  }
-
-  private updateCalibrationProgress(data: any) {
-    // Update progress from WebSocket data
-    if (data && data.progress) {
-      this.currentProgress = {
-        currentStep: data.progress.currentPoint || 1,
-        totalSteps: data.progress.totalPoints || 9,
-        percentage: Math.round((data.progress.currentPoint / data.progress.totalPoints) * 100),
-        message: `กำลังเก็บข้อมูลจุดที่ ${data.progress.currentPoint}`,
-        estimatedTimeRemaining: data.progress.estimatedTime || 30,
-        requiredSamples: data.progress.requiredSamples || 5,
-        totalPoints: data.progress.totalPoints || 9,
-        currentPoint: data.progress.currentPoint || 1,
-        collectedSamples: data.progress.collectedSamples || 0
-      };
-
-      // Update status based on backend data
-      if (data.status) {
-        switch (data.status) {
-          case 'collecting':
-            this.calibrationStatus = CalibrationStatus.COLLECTING;
-            break;
-          case 'processing':
-            this.calibrationStatus = CalibrationStatus.PROCESSING;
-            break;
-          case 'completed':
-            this.calibrationStatus = CalibrationStatus.COMPLETED;
-            this.completeCalibration(data.result);
-            break;
-          case 'failed':
-            this.calibrationStatus = CalibrationStatus.FAILED;
-            break;
-        }
-      }
     }
   }
 
@@ -670,50 +419,26 @@ export class CalibrationComponent implements OnInit, OnDestroy {
     }, 3000);
   }
 
-  private async completeCalibration(backendResult?: any) {
-    this.calibrationStatus = CalibrationStatus.PROCESSING;
+  private completeCalibration() {
+    this.calibrationStatus = CalibrationStatus.COMPLETED;
+    this.currentProgress = null;
     
-    try {
-      let result = backendResult;
-      
-      if (this.backendConnected && !result) {
-        // Get final result from backend
-        result = await this.calibrationApi.completeCalibration()
-          .pipe(
-            takeUntil(this.destroy$),
-            catchError(error => {
-              console.error('Complete calibration API call failed:', error);
-              return of(null);
-            })
-          )
-          .toPromise();
-      }
-      
-      this.calibrationStatus = CalibrationStatus.COMPLETED;
-      this.currentProgress = null;
-      
-      // Use backend result or mock data
-      this.lastResult = result || {
-        success: true,
-        accuracy: 0.92,
-        quality: 'good',
-        duration: 27000,
-        points: [],
-        message: 'การปรับจูนเสร็จสิ้น'
-      };
-      
-      const accuracy = this.lastResult?.accuracy ? Math.round(this.lastResult.accuracy * 100) : 92;
-      this.notifications.showSuccess(`การปรับจูนเสร็จสิ้น ความแม่นยำ ${accuracy}%`);
-      
-      setTimeout(() => {
-        this.calibrationStatus = CalibrationStatus.IDLE;
-        this.canStartCalibration = this.cameraReady;
-      }, 3000);
-      
-    } catch (error) {
-      this.errorHandler.handleError(error as Error, 'Failed to complete calibration');
-      this.calibrationStatus = CalibrationStatus.FAILED;
-    }
+    // Mock result
+    this.lastResult = {
+      success: true,
+      accuracy: 0.92,
+      quality: 'good',
+      duration: 27000,
+      points: [],
+      message: 'การปรับจูนเสร็จสิ้น'
+    };
+    
+    this.notifications.showSuccess('การปรับจูนเสร็จสิ้น ความแม่นยำ 92%');
+    
+    setTimeout(() => {
+      this.calibrationStatus = CalibrationStatus.IDLE;
+      this.canStartCalibration = this.cameraReady;
+    }, 3000);
   }
 
   getStatusText(status: CalibrationStatus): string {
@@ -721,8 +446,7 @@ export class CalibrationComponent implements OnInit, OnDestroy {
       [CalibrationStatus.IDLE]: 'ยังไม่เริ่ม',
       [CalibrationStatus.INITIALIZING]: 'กำลังเตรียม',
       [CalibrationStatus.COLLECTING]: 'กำลังเก็บข้อมูล',
-      [CalibrationStatus.PROCESSING]: 'กำลังประมวลผล',
-      [CalibrationStatus.VALIDATING]: 'กำลังตรวจสอบ',
+      [CalibrationStatus.VALIDATING]: 'กำลังประมวลผล',
       [CalibrationStatus.COMPLETED]: 'เสร็จสิ้น',
       [CalibrationStatus.FAILED]: 'ล้มเหลว'
     };

@@ -22,8 +22,7 @@ const routes: Routes = [
   imports: [
     CommonModule,
     FormsModule,
-    RouterModule.forChild(routes),
-    TestingDashboardComponent
+    RouterModule.forChild(routes)
   ],
   exports: [RouterModule]
 })

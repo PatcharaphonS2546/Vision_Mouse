@@ -1,10 +1,7 @@
 import { Component, OnInit, OnDestroy, ViewChild, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Chart, ChartConfiguration, ChartType, registerables } from 'chart.js';
+import { HttpClient } from '@angular/common/http';
 import { Subject, interval, takeUntil } from 'rxjs';
-
-// Register Chart.js components
-Chart.register(...registerables);
 
 interface PerformanceData {
   timestamp: string;
@@ -20,413 +17,449 @@ interface PerformanceData {
   imports: [CommonModule],
   template: `
     <div class="performance-charts">
-      <!-- Real-time Performance Chart -->
+      <!-- Real-time Performance Metrics -->
       <div class="chart-container">
         <div class="chart-header">
           <h3 class="chart-title">Real-time Performance</h3>
           <div class="chart-controls">
-            <button class="btn btn-sm" [class.active]="selectedMetric === 'accuracy'" (click)="selectMetric('accuracy')">
-              Accuracy
+            <button class="control-btn" [class.active]="showGazeAccuracy" (click)="toggleMetric('gaze')">
+              Gaze Accuracy
             </button>
-            <button class="btn btn-sm" [class.active]="selectedMetric === 'framerate'" (click)="selectMetric('framerate')">
+            <button class="control-btn" [class.active]="showFrameRate" (click)="toggleMetric('fps')">
               Frame Rate
             </button>
-            <button class="btn btn-sm" [class.active]="selectedMetric === 'latency'" (click)="selectMetric('latency')">
+            <button class="control-btn" [class.active]="showLatency" (click)="toggleMetric('latency')">
               Latency
             </button>
-            <button class="btn btn-sm" [class.active]="selectedMetric === 'ai'" (click)="selectMetric('ai')">
+            <button class="control-btn" [class.active]="showAiConfidence" (click)="toggleMetric('ai')">
               AI Confidence
             </button>
           </div>
         </div>
+        
         <div class="chart-content">
-          <canvas #performanceChart></canvas>
+          <div class="mock-chart">
+            <div class="chart-placeholder">
+              <div class="chart-line" *ngIf="showGazeAccuracy" [style.height.%]="currentMetrics.gazeAccuracy * 100">
+                <span class="metric-label">Gaze: {{ (currentMetrics.gazeAccuracy * 100) | number:'1.1-1' }}%</span>
+              </div>
+              <div class="chart-line" *ngIf="showFrameRate" [style.height.%]="(currentMetrics.frameRate / 60) * 100">
+                <span class="metric-label">FPS: {{ currentMetrics.frameRate | number:'1.0-0' }}</span>
+              </div>
+              <div class="chart-line" *ngIf="showLatency" [style.height.%]="Math.max(0, 100 - currentMetrics.latency)">
+                <span class="metric-label">Latency: {{ currentMetrics.latency | number:'1.0-0' }}ms</span>
+              </div>
+              <div class="chart-line" *ngIf="showAiConfidence" [style.height.%]="currentMetrics.aiConfidence * 100">
+                <span class="metric-label">AI: {{ (currentMetrics.aiConfidence * 100) | number:'1.1-1' }}%</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Gaze Accuracy Distribution -->
+      <!-- Accuracy Distribution -->
       <div class="chart-container">
         <div class="chart-header">
           <h3 class="chart-title">Accuracy Distribution</h3>
           <span class="chart-subtitle">Last 100 samples</span>
         </div>
+        
         <div class="chart-content">
-          <canvas #accuracyChart></canvas>
+          <div class="distribution-bars">
+            <div *ngFor="let bucket of accuracyDistribution" class="bar-container">
+              <div class="bar" [style.height.%]="bucket.percentage">
+                <span class="bar-label">{{ bucket.count }}</span>
+              </div>
+              <span class="bar-range">{{ bucket.range }}</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- AI Performance Radar -->
+      <!-- Performance Radar -->
       <div class="chart-container">
         <div class="chart-header">
-          <h3 class="chart-title">AI Performance Radar</h3>
+          <h3 class="chart-title">Performance Overview</h3>
           <span class="chart-subtitle">Multi-dimensional analysis</span>
         </div>
+        
         <div class="chart-content">
-          <canvas #radarChart></canvas>
+          <div class="radar-chart">
+            <div class="radar-metric" *ngFor="let metric of radarMetrics">
+              <div class="metric-name">{{ metric.name }}</div>
+              <div class="metric-bar">
+                <div class="metric-fill" [style.width.%]="metric.value * 100"></div>
+              </div>
+              <div class="metric-value">{{ (metric.value * 100) | number:'1.0-0' }}%</div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- System Health Gauge -->
+      <!-- Historical Data Table -->
       <div class="chart-container">
         <div class="chart-header">
-          <h3 class="chart-title">System Health</h3>
-          <span class="chart-subtitle">Overall performance score</span>
+          <h3 class="chart-title">Historical Data</h3>
+          <div class="chart-controls">
+            <button class="control-btn" (click)="exportData()">Export CSV</button>
+            <button class="control-btn" (click)="clearData()">Clear Data</button>
+          </div>
         </div>
+        
         <div class="chart-content">
-          <div class="gauge-container">
-            <canvas #gaugeChart></canvas>
-            <div class="gauge-label">
-              <span class="gauge-value">{{ systemHealth }}%</span>
-              <span class="gauge-text">Health Score</span>
+          <div class="data-table">
+            <div class="table-header">
+              <span>Time</span>
+              <span>Accuracy</span>
+              <span>FPS</span>
+              <span>Latency</span>
+              <span>AI Confidence</span>
+            </div>
+            <div class="table-row" *ngFor="let data of recentData.slice(-10)">
+              <span>{{ data.timestamp }}</span>
+              <span>{{ (data.gazeAccuracy * 100) | number:'1.1-1' }}%</span>
+              <span>{{ data.frameRate | number:'1.0-0' }}</span>
+              <span>{{ data.latency | number:'1.0-0' }}ms</span>
+              <span>{{ (data.aiConfidence * 100) | number:'1.1-1' }}%</span>
             </div>
           </div>
         </div>
       </div>
     </div>
   `,
-  styleUrls: ['./performance-charts.component.scss'],
+  styles: [`
+    .performance-charts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 20px;
+      padding: 20px;
+    }
+
+    .chart-container {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+
+    .chart-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      background: #f8f9fa;
+      border-bottom: 1px solid #e9ecef;
+    }
+
+    .chart-title {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .chart-subtitle {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .chart-controls {
+      display: flex;
+      gap: 8px;
+    }
+
+    .control-btn {
+      padding: 6px 12px;
+      border: 1px solid #ddd;
+      background: white;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+
+    .control-btn:hover {
+      background: #f8f9fa;
+    }
+
+    .control-btn.active {
+      background: #007bff;
+      color: white;
+      border-color: #007bff;
+    }
+
+    .chart-content {
+      padding: 20px;
+      height: 250px;
+    }
+
+    .mock-chart {
+      height: 100%;
+      border: 1px solid #e9ecef;
+      border-radius: 4px;
+      position: relative;
+    }
+
+    .chart-placeholder {
+      height: 100%;
+      display: flex;
+      align-items: end;
+      justify-content: space-around;
+      padding: 10px;
+    }
+
+    .chart-line {
+      width: 60px;
+      background: linear-gradient(180deg, #007bff 0%, #28a745 50%, #ffc107 100%);
+      border-radius: 4px 4px 0 0;
+      position: relative;
+      margin: 0 5px;
+      transition: height 0.3s ease;
+    }
+
+    .metric-label {
+      position: absolute;
+      top: -25px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 10px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .distribution-bars {
+      display: flex;
+      align-items: end;
+      height: 100%;
+      padding: 10px;
+      gap: 5px;
+    }
+
+    .bar-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100%;
+    }
+
+    .bar {
+      width: 100%;
+      background: #28a745;
+      border-radius: 2px 2px 0 0;
+      position: relative;
+      display: flex;
+      align-items: start;
+      justify-content: center;
+      padding-top: 5px;
+    }
+
+    .bar-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: white;
+    }
+
+    .bar-range {
+      font-size: 10px;
+      margin-top: 5px;
+      color: #666;
+    }
+
+    .radar-chart {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+      padding: 20px;
+    }
+
+    .radar-metric {
+      display: grid;
+      grid-template-columns: 120px 1fr 60px;
+      gap: 15px;
+      align-items: center;
+    }
+
+    .metric-name {
+      font-size: 12px;
+      font-weight: 500;
+      color: #333;
+    }
+
+    .metric-bar {
+      height: 8px;
+      background: #e9ecef;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .metric-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #dc3545 0%, #ffc107 50%, #28a745 100%);
+      transition: width 0.3s ease;
+    }
+
+    .metric-value {
+      font-size: 12px;
+      font-weight: 600;
+      text-align: right;
+    }
+
+    .data-table {
+      font-size: 12px;
+    }
+
+    .table-header,
+    .table-row {
+      display: grid;
+      grid-template-columns: 80px 80px 50px 60px 90px;
+      gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid #e9ecef;
+    }
+
+    .table-header {
+      font-weight: 600;
+      background: #f8f9fa;
+      padding: 10px 0;
+    }
+
+    .table-row:hover {
+      background: #f8f9fa;
+    }
+  `]
 })
 export class PerformanceChartsComponent implements OnInit, OnDestroy {
-  @ViewChild('performanceChart') performanceChartRef!: ElementRef<HTMLCanvasElement>;
-  @ViewChild('accuracyChart') accuracyChartRef!: ElementRef<HTMLCanvasElement>;
-  @ViewChild('radarChart') radarChartRef!: ElementRef<HTMLCanvasElement>;
-  @ViewChild('gaugeChart') gaugeChartRef!: ElementRef<HTMLCanvasElement>;
-
   private destroy$ = new Subject<void>();
-  
-  // Charts
-  private performanceChart: Chart | null = null;
-  private accuracyChart: Chart | null = null;
-  private radarChart: Chart | null = null;
-  private gaugeChart: Chart | null = null;
 
-  // Data
-  performanceData: PerformanceData[] = [];
-  selectedMetric: 'accuracy' | 'framerate' | 'latency' | 'ai' = 'accuracy';
-  systemHealth = 85;
+  // Chart visibility toggles
+  showGazeAccuracy = true;
+  showFrameRate = true;
+  showLatency = false;
+  showAiConfidence = false;
 
-  ngOnInit(): void {
-    this.initializeCharts();
-    this.startDataGeneration();
+  // Current metrics
+  currentMetrics: PerformanceData = {
+    timestamp: new Date().toLocaleTimeString(),
+    gazeAccuracy: 0.85,
+    frameRate: 30,
+    latency: 25,
+    aiConfidence: 0.92
+  };
+
+  // Historical data
+  recentData: PerformanceData[] = [];
+
+  // Accuracy distribution
+  accuracyDistribution = [
+    { range: '90-100%', count: 45, percentage: 90 },
+    { range: '80-89%', count: 32, percentage: 64 },
+    { range: '70-79%', count: 18, percentage: 36 },
+    { range: '60-69%', count: 5, percentage: 10 },
+    { range: '< 60%', count: 0, percentage: 0 }
+  ];
+
+  // Radar metrics
+  radarMetrics = [
+    { name: 'Gaze Accuracy', value: 0.85 },
+    { name: 'Eye Detection', value: 0.92 },
+    { name: 'Face Tracking', value: 0.88 },
+    { name: 'Calibration Quality', value: 0.91 },
+    { name: 'System Performance', value: 0.87 },
+    { name: 'Stability Index', value: 0.83 }
+  ];
+
+  constructor(private http: HttpClient) {}
+
+  get Math() { return Math; }
+
+  ngOnInit() {
+    this.startDataCollection();
+    this.generateInitialData();
   }
 
-  ngOnDestroy(): void {
+  ngOnDestroy() {
     this.destroy$.next();
     this.destroy$.complete();
-    this.destroyCharts();
   }
 
-  private initializeCharts(): void {
-    setTimeout(() => {
-      this.createPerformanceChart();
-      this.createAccuracyChart();
-      this.createRadarChart();
-      this.createGaugeChart();
-    }, 100);
-  }
-
-  private createPerformanceChart(): void {
-    const ctx = this.performanceChartRef.nativeElement.getContext('2d');
-    if (!ctx) return;
-
-    this.performanceChart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: [],
-        datasets: [{
-          label: 'Gaze Accuracy (%)',
-          data: [],
-          borderColor: '#3b82f6',
-          backgroundColor: 'rgba(59, 130, 246, 0.1)',
-          borderWidth: 2,
-          fill: true,
-          tension: 0.4
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: {
-          duration: 750,
-          easing: 'easeInOutQuart'
-        },
-        scales: {
-          x: {
-            display: false
-          },
-          y: {
-            beginAtZero: true,
-            max: 100,
-            grid: {
-              color: 'rgba(255, 255, 255, 0.1)'
-            },
-            ticks: {
-              color: 'rgba(255, 255, 255, 0.8)'
-            }
-          }
-        },
-        plugins: {
-          legend: {
-            display: false
-          }
-        },
-        elements: {
-          point: {
-            radius: 0,
-            hoverRadius: 6
-          }
-        }
-      }
+  private startDataCollection() {
+    interval(1000).pipe(takeUntil(this.destroy$)).subscribe(() => {
+      this.updateMetrics();
     });
   }
 
-  private createAccuracyChart(): void {
-    const ctx = this.accuracyChartRef.nativeElement.getContext('2d');
-    if (!ctx) return;
-
-    this.accuracyChart = new Chart(ctx, {
-      type: 'doughnut',
-      data: {
-        labels: ['Excellent (90-100%)', 'Good (80-90%)', 'Fair (70-80%)', 'Poor (<70%)'],
-        datasets: [{
-          data: [25, 45, 20, 10],
-          backgroundColor: [
-            '#10b981',
-            '#3b82f6', 
-            '#f59e0b',
-            '#ef4444'
-          ],
-          borderWidth: 0
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            position: 'bottom',
-            labels: {
-              color: 'rgba(255, 255, 255, 0.8)',
-              usePointStyle: true,
-              padding: 15
-            }
-          }
-        }
-      }
-    });
-  }
-
-  private createRadarChart(): void {
-    const ctx = this.radarChartRef.nativeElement.getContext('2d');
-    if (!ctx) return;
-
-    this.radarChart = new Chart(ctx, {
-      type: 'radar',
-      data: {
-        labels: [
-          'Accuracy',
-          'Speed', 
-          'Stability',
-          'AI Confidence',
-          'Calibration',
-          'Responsiveness'
-        ],
-        datasets: [{
-          label: 'Current Performance',
-          data: [85, 78, 92, 88, 95, 82],
-          borderColor: '#8b5cf6',
-          backgroundColor: 'rgba(139, 92, 246, 0.2)',
-          borderWidth: 2,
-          pointBackgroundColor: '#8b5cf6',
-          pointBorderColor: '#ffffff',
-          pointBorderWidth: 2
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-          r: {
-            beginAtZero: true,
-            max: 100,
-            grid: {
-              color: 'rgba(255, 255, 255, 0.1)'
-            },
-            angleLines: {
-              color: 'rgba(255, 255, 255, 0.1)'
-            },
-            pointLabels: {
-              color: 'rgba(255, 255, 255, 0.8)',
-              font: {
-                size: 12
-              }
-            },
-            ticks: {
-              display: false
-            }
-          }
-        },
-        plugins: {
-          legend: {
-            labels: {
-              color: 'rgba(255, 255, 255, 0.8)'
-            }
-          }
-        }
-      }
-    });
-  }
-
-  private createGaugeChart(): void {
-    const ctx = this.gaugeChartRef.nativeElement.getContext('2d');
-    if (!ctx) return;
-
-    this.gaugeChart = new Chart(ctx, {
-      type: 'doughnut',
-      data: {
-        datasets: [{
-          data: [this.systemHealth, 100 - this.systemHealth],
-          backgroundColor: [
-            this.getHealthColor(this.systemHealth),
-            'rgba(255, 255, 255, 0.1)'
-          ],
-          borderWidth: 0,
-          circumference: 180,
-          rotation: 270
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        cutout: '80%',
-        plugins: {
-          legend: {
-            display: false
-          },
-          tooltip: {
-            enabled: false
-          }
-        }
-      }
-    });
-  }
-
-  private getHealthColor(health: number): string {
-    if (health >= 90) return '#10b981';
-    if (health >= 75) return '#3b82f6';
-    if (health >= 60) return '#f59e0b';
-    return '#ef4444';
-  }
-
-  private startDataGeneration(): void {
-    interval(1000)
-      .pipe(takeUntil(this.destroy$))
-      .subscribe(() => {
-        this.generateNewData();
-        this.updateCharts();
-        this.updateSystemHealth();
+  private generateInitialData() {
+    for (let i = 0; i < 50; i++) {
+      this.recentData.push({
+        timestamp: new Date(Date.now() - (50 - i) * 1000).toLocaleTimeString(),
+        gazeAccuracy: 0.7 + Math.random() * 0.3,
+        frameRate: 25 + Math.random() * 10,
+        latency: 15 + Math.random() * 20,
+        aiConfidence: 0.8 + Math.random() * 0.2
       });
+    }
   }
 
-  private generateNewData(): void {
-    const timestamp = new Date().toLocaleTimeString();
-    const newData: PerformanceData = {
-      timestamp,
-      gazeAccuracy: 75 + Math.random() * 20,
-      frameRate: 28 + Math.random() * 4,
-      latency: 15 + Math.random() * 10,
-      aiConfidence: 80 + Math.random() * 15
+  private updateMetrics() {
+    this.currentMetrics = {
+      timestamp: new Date().toLocaleTimeString(),
+      gazeAccuracy: 0.7 + Math.random() * 0.3,
+      frameRate: 25 + Math.random() * 10,
+      latency: 15 + Math.random() * 20,
+      aiConfidence: 0.8 + Math.random() * 0.2
     };
 
-    this.performanceData.push(newData);
+    this.recentData.push(this.currentMetrics);
+    if (this.recentData.length > 100) {
+      this.recentData.shift();
+    }
+
+    // Update radar metrics
+    this.radarMetrics = [
+      { name: 'Gaze Accuracy', value: this.currentMetrics.gazeAccuracy },
+      { name: 'Eye Detection', value: 0.8 + Math.random() * 0.2 },
+      { name: 'Face Tracking', value: 0.8 + Math.random() * 0.2 },
+      { name: 'Calibration Quality', value: 0.85 + Math.random() * 0.15 },
+      { name: 'System Performance', value: Math.max(0, 1 - this.currentMetrics.latency / 100) },
+      { name: 'Stability Index', value: 0.75 + Math.random() * 0.25 }
+    ];
+  }
+
+  toggleMetric(type: string) {
+    switch (type) {
+      case 'gaze':
+        this.showGazeAccuracy = !this.showGazeAccuracy;
+        break;
+      case 'fps':
+        this.showFrameRate = !this.showFrameRate;
+        break;
+      case 'latency':
+        this.showLatency = !this.showLatency;
+        break;
+      case 'ai':
+        this.showAiConfidence = !this.showAiConfidence;
+        break;
+    }
+  }
+
+  exportData() {
+    const csvData = this.recentData.map(d => 
+      `${d.timestamp},${d.gazeAccuracy},${d.frameRate},${d.latency},${d.aiConfidence}`
+    ).join('\n');
     
-    // Keep only last 50 data points
-    if (this.performanceData.length > 50) {
-      this.performanceData.shift();
-    }
+    const header = 'Timestamp,Gaze Accuracy,Frame Rate,Latency,AI Confidence\n';
+    const blob = new Blob([header + csvData], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `performance_data_${Date.now()}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
-  private updateCharts(): void {
-    if (this.performanceChart) {
-      const chart = this.performanceChart;
-      chart.data.labels = this.performanceData.map(d => d.timestamp);
-      
-      let data: number[] = [];
-      let label = '';
-      let color = '#3b82f6';
-      
-      switch (this.selectedMetric) {
-        case 'accuracy':
-          data = this.performanceData.map(d => d.gazeAccuracy);
-          label = 'Gaze Accuracy (%)';
-          color = '#3b82f6';
-          break;
-        case 'framerate':
-          data = this.performanceData.map(d => d.frameRate);
-          label = 'Frame Rate (FPS)';
-          color = '#10b981';
-          break;
-        case 'latency':
-          data = this.performanceData.map(d => d.latency);
-          label = 'Latency (ms)';
-          color = '#f59e0b';
-          break;
-        case 'ai':
-          data = this.performanceData.map(d => d.aiConfidence);
-          label = 'AI Confidence (%)';
-          color = '#8b5cf6';
-          break;
-      }
-      
-      chart.data.datasets[0].data = data;
-      chart.data.datasets[0].label = label;
-      chart.data.datasets[0].borderColor = color;
-      chart.data.datasets[0].backgroundColor = color + '20';
-      chart.update('none');
-    }
-
-    // Update radar chart with latest data
-    if (this.radarChart && this.performanceData.length > 0) {
-      const latest = this.performanceData[this.performanceData.length - 1];
-      this.radarChart.data.datasets[0].data = [
-        latest.gazeAccuracy,
-        latest.frameRate * 1.5, // Scale for better visualization
-        85 + Math.random() * 10, // Stability (simulated)
-        latest.aiConfidence,
-        90 + Math.random() * 8, // Calibration (simulated)
-        80 + Math.random() * 15 // Responsiveness (simulated)
-      ];
-      this.radarChart.update('none');
-    }
-  }
-
-  private updateSystemHealth(): void {
-    if (this.performanceData.length > 0) {
-      const latest = this.performanceData[this.performanceData.length - 1];
-      this.systemHealth = Math.round(
-        (latest.gazeAccuracy + latest.aiConfidence + (latest.frameRate * 2)) / 4
-      );
-      
-      if (this.gaugeChart && this.gaugeChart.data.datasets[0]) {
-        this.gaugeChart.data.datasets[0].data = [this.systemHealth, 100 - this.systemHealth];
-        const backgrounds = this.gaugeChart.data.datasets[0].backgroundColor;
-        if (Array.isArray(backgrounds)) {
-          backgrounds[0] = this.getHealthColor(this.systemHealth);
-        }
-        this.gaugeChart.update('none');
-      }
-    }
-  }
-
-  selectMetric(metric: 'accuracy' | 'framerate' | 'latency' | 'ai'): void {
-    this.selectedMetric = metric;
-    this.updateCharts();
-  }
-
-  private destroyCharts(): void {
-    this.performanceChart?.destroy();
-    this.accuracyChart?.destroy();
-    this.radarChart?.destroy();
-    this.gaugeChart?.destroy();
+  clearData() {
+    this.recentData = [];
+    console.log('Performance data cleared');
   }
 }

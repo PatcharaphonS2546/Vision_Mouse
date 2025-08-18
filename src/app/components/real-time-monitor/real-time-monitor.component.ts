@@ -1,14 +1,38 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Subscription } from 'rxjs';
-import { 
-  RealTimeProcessingService, 
-  RealTimeMetrics, 
-  AdaptiveSettings, 
-  ProcessingPipeline 
-} from '../../services/real-time-processing.service';
-import { PerformanceService } from '../../services/performance.service';
+import { HttpClient } from '@angular/common/http';
+import { Subscription, timer } from 'rxjs';
+
+// Mock interfaces for UI-only component
+interface RealTimeMetrics {
+  frameRate: number;
+  averageLatency: number;
+  droppedFrames: number;
+  processingLoad: number;
+  memoryUsage: number;
+  queueLength: number;
+  adaptiveQuality: number;
+}
+
+interface AdaptiveSettings {
+  targetFPS: number;
+  maxLatency: number;
+  qualityThreshold: number;
+  adaptiveQualityEnabled: boolean;
+  frameSkippingEnabled: boolean;
+  prioritizedProcessing: boolean;
+}
+
+interface ProcessingPipeline {
+  id: string;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  lastExecutionTime: number;
+  maxExecutionTime: number;
+  skipFrames: number;
+}
 
 @Component({
   selector: 'app-real-time-monitor',
@@ -183,32 +207,29 @@ import { PerformanceService } from '../../services/performance.service';
             <input 
               type="checkbox" 
               [(ngModel)]="settings.adaptiveQualityEnabled"
-              (change)="updateSettings()"
-              id="adaptiveQuality">
-            <label for="adaptiveQuality">Adaptive Quality</label>
+              (change)="updateSettings()">
+            <label>Adaptive Quality</label>
           </div>
           
           <div class="setting-item checkbox">
             <input 
               type="checkbox" 
               [(ngModel)]="settings.frameSkippingEnabled"
-              (change)="updateSettings()"
-              id="frameSkipping">
-            <label for="frameSkipping">Frame Skipping</label>
+              (change)="updateSettings()">
+            <label>Frame Skipping</label>
           </div>
           
           <div class="setting-item checkbox">
             <input 
               type="checkbox" 
               [(ngModel)]="settings.prioritizedProcessing"
-              (change)="updateSettings()"
-              id="prioritizedProcessing">
-            <label for="prioritizedProcessing">Prioritized Processing</label>
+              (change)="updateSettings()">
+            <label>Prioritized Processing</label>
           </div>
         </div>
       </div>
 
-      <!-- Performance Chart -->
+      <!-- Performance History Chart -->
       <div class="chart-panel">
         <h4>Performance History</h4>
         <div class="performance-chart">
@@ -348,8 +369,6 @@ import { PerformanceService } from '../../services/performance.service';
       font-size: 12px;
       color: #666;
       margin-bottom: 5px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
     }
 
     .metric-value {
@@ -362,17 +381,11 @@ import { PerformanceService } from '../../services/performance.service';
 
     .metric-value.warning {
       color: #dc3545;
-      animation: pulse 2s infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.7; }
     }
 
     .metric-target {
       font-size: 11px;
-      color: #888;
+      color: #999;
     }
 
     .progress-bar {
@@ -381,7 +394,7 @@ import { PerformanceService } from '../../services/performance.service';
       background: #e9ecef;
       border-radius: 4px;
       overflow: hidden;
-      margin-top: 8px;
+      margin-top: 5px;
     }
 
     .progress-fill {
@@ -497,20 +510,26 @@ import { PerformanceService } from '../../services/performance.service';
     .setting-item.checkbox {
       flex-direction: row;
       align-items: center;
+      gap: 8px;
     }
 
     .setting-item label {
-      font-size: 14px;
+      font-size: 13px;
       color: #555;
       font-weight: 500;
     }
 
-    .setting-item input[type="number"],
+    .setting-item input[type="number"], 
     .setting-item input[type="range"] {
       padding: 8px;
-      border: 1px solid #dee2e6;
+      border: 1px solid #ddd;
       border-radius: 4px;
       font-size: 14px;
+    }
+
+    .setting-item input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
     }
 
     /* Chart Panel */
@@ -523,7 +542,7 @@ import { PerformanceService } from '../../services/performance.service';
     }
 
     .performance-chart {
-      border: 1px solid #dee2e6;
+      border: 1px solid #ddd;
       border-radius: 4px;
       overflow: hidden;
     }
@@ -590,12 +609,10 @@ export class RealTimeMonitorComponent implements OnInit, OnDestroy {
   performanceHistory: any[] = [];
   private subscriptions: Subscription[] = [];
 
-  constructor(
-    private realTimeService: RealTimeProcessingService,
-    private performanceService: PerformanceService
-  ) {}
+  constructor(private http: HttpClient) {}
 
   ngOnInit(): void {
+    this.initializeMockData();
     this.initializeMonitoring();
   }
 
@@ -603,27 +620,123 @@ export class RealTimeMonitorComponent implements OnInit, OnDestroy {
     this.subscriptions.forEach(sub => sub.unsubscribe());
   }
 
+  private initializeMockData(): void {
+    // Initialize mock metrics
+    this.metrics = {
+      frameRate: 28,
+      averageLatency: 18,
+      droppedFrames: 2,
+      processingLoad: 45,
+      memoryUsage: 32,
+      queueLength: 1,
+      adaptiveQuality: 85
+    };
+
+    // Initialize mock pipelines
+    this.pipelines = [
+      {
+        id: 'face-detection',
+        name: 'Face Detection',
+        enabled: true,
+        priority: 1,
+        lastExecutionTime: 8.5,
+        maxExecutionTime: 16,
+        skipFrames: 0
+      },
+      {
+        id: 'eye-tracking',
+        name: 'Eye Tracking',
+        enabled: true,
+        priority: 2,
+        lastExecutionTime: 12.3,
+        maxExecutionTime: 20,
+        skipFrames: 1
+      },
+      {
+        id: 'gaze-estimation',
+        name: 'Gaze Estimation',
+        enabled: true,
+        priority: 3,
+        lastExecutionTime: 6.1,
+        maxExecutionTime: 15,
+        skipFrames: 0
+      },
+      {
+        id: 'head-pose',
+        name: 'Head Pose Detection',
+        enabled: false,
+        priority: 4,
+        lastExecutionTime: 22.1,
+        maxExecutionTime: 25,
+        skipFrames: 2
+      }
+    ];
+
+    // Initialize performance history with some mock data
+    const now = Date.now();
+    for (let i = 0; i < 20; i++) {
+      this.performanceHistory.push({
+        timestamp: now - (20 - i) * 1000,
+        frameRate: 25 + Math.random() * 10,
+        latency: 15 + Math.random() * 10
+      });
+    }
+  }
+
   private initializeMonitoring(): void {
-    // Subscribe to metrics updates
-    const metricsSubscription = this.realTimeService.getMetrics().subscribe(metrics => {
-      this.metrics = metrics;
-      this.addToPerformanceHistory(metrics);
+    // Simulate real-time metrics updates
+    this.subscriptions.push(
+      timer(0, 1000).subscribe(() => {
+        this.updateMockMetrics();
+      })
+    );
+
+    // Simulate pipeline status updates
+    this.subscriptions.push(
+      timer(0, 500).subscribe(() => {
+        this.updateMockPipelineStats();
+      })
+    );
+  }
+
+  private updateMockMetrics(): void {
+    // Simulate fluctuating metrics
+    this.metrics.frameRate = Math.max(20, Math.min(30, this.metrics.frameRate + (Math.random() - 0.5) * 4));
+    this.metrics.averageLatency = Math.max(10, Math.min(30, this.metrics.averageLatency + (Math.random() - 0.5) * 3));
+    this.metrics.processingLoad = Math.max(20, Math.min(90, this.metrics.processingLoad + (Math.random() - 0.5) * 10));
+    this.metrics.memoryUsage = Math.max(20, Math.min(80, this.metrics.memoryUsage + (Math.random() - 0.5) * 5));
+    this.metrics.queueLength = Math.max(0, Math.min(5, Math.round(this.metrics.queueLength + (Math.random() - 0.5) * 2)));
+    
+    // Occasionally drop a frame
+    if (Math.random() < 0.1) {
+      this.metrics.droppedFrames++;
+    }
+
+    // Update adaptive quality based on performance
+    if (this.metrics.frameRate < this.settings.targetFPS * 0.8 || this.metrics.averageLatency > this.settings.maxLatency) {
+      this.metrics.adaptiveQuality = Math.max(50, this.metrics.adaptiveQuality - 5);
+    } else {
+      this.metrics.adaptiveQuality = Math.min(100, this.metrics.adaptiveQuality + 2);
+    }
+
+    this.addToPerformanceHistory(this.metrics);
+  }
+
+  private updateMockPipelineStats(): void {
+    this.pipelines.forEach(pipeline => {
+      if (pipeline.enabled) {
+        // Simulate execution time fluctuation
+        const variance = pipeline.maxExecutionTime * 0.3;
+        pipeline.lastExecutionTime = Math.max(1, pipeline.lastExecutionTime + (Math.random() - 0.5) * variance);
+        
+        // Occasionally skip frames if performance is poor
+        if (this.metrics.processingLoad > 70) {
+          pipeline.skipFrames = Math.min(pipeline.skipFrames + 1, 3);
+        } else {
+          pipeline.skipFrames = Math.max(0, pipeline.skipFrames - 1);
+        }
+      }
     });
-    this.subscriptions.push(metricsSubscription);
-
-    // Load initial settings and pipeline status
-    this.settings = this.realTimeService.getSettings();
-    this.pipelines = this.realTimeService.getPipelineStatus();
-
-    // Update pipeline status periodically
-    const pipelineUpdateInterval = setInterval(() => {
-      this.pipelines = this.realTimeService.getPipelineStatus();
-    }, 1000);
-
-    // Cleanup interval on destroy
-    this.subscriptions.push({
-      unsubscribe: () => clearInterval(pipelineUpdateInterval)
-    } as Subscription);
   }
 
   private addToPerformanceHistory(metrics: RealTimeMetrics): void {
@@ -640,30 +753,54 @@ export class RealTimeMonitorComponent implements OnInit, OnDestroy {
   }
 
   toggleProcessing(): void {
+    this.isProcessingActive = !this.isProcessingActive;
+    
     if (this.isProcessingActive) {
-      this.realTimeService.stop();
-      this.isProcessingActive = false;
+      // Simulate processing startup
+      this.metrics.frameRate = this.settings.targetFPS;
+      this.metrics.processingLoad = 60;
     } else {
-      this.realTimeService.start();
-      this.isProcessingActive = true;
+      // Simulate processing stop
+      this.metrics.frameRate = 0;
+      this.metrics.processingLoad = 10;
     }
+
+    // TODO: Call backend API
+    // this.http.post('/api/processing/toggle', { active: this.isProcessingActive }).subscribe();
   }
 
   clearBuffer(): void {
-    this.realTimeService.clearBuffer();
+    this.metrics.queueLength = 0;
+    this.metrics.droppedFrames = 0;
+    
+    // TODO: Call backend API
+    // this.http.post('/api/processing/clear-buffer', {}).subscribe();
   }
 
   resetMetrics(): void {
     this.performanceHistory = [];
-    // Trigger metrics reset in service if available
+    this.metrics.droppedFrames = 0;
+    
+    // TODO: Call backend API
+    // this.http.post('/api/processing/reset-metrics', {}).subscribe();
   }
 
   updateSettings(): void {
-    this.realTimeService.updateSettings(this.settings);
+    // Apply settings changes immediately for UI feedback
+    console.log('Settings updated:', this.settings);
+    
+    // TODO: Call backend API
+    // this.http.put('/api/processing/settings', this.settings).subscribe();
   }
 
   updatePipelineEnabled(pipelineId: string, enabled: boolean): void {
-    this.realTimeService.setPipelineEnabled(pipelineId, enabled);
+    const pipeline = this.pipelines.find(p => p.id === pipelineId);
+    if (pipeline) {
+      pipeline.enabled = enabled;
+      
+      // TODO: Call backend API
+      // this.http.put(`/api/processing/pipeline/${pipelineId}`, { enabled }).subscribe();
+    }
   }
 
   getTimingPercentage(pipeline: ProcessingPipeline): number {
@@ -673,28 +810,67 @@ export class RealTimeMonitorComponent implements OnInit, OnDestroy {
   getChartPoints(metric: 'frameRate' | 'latency'): string {
     if (this.performanceHistory.length < 2) return '';
 
-    const chartWidth = 400;
-    const chartHeight = 200;
-    const maxValue = metric === 'frameRate' ? 60 : 100;
-
-    return this.performanceHistory
-      .map((point, index) => {
-        const x = (index / (this.performanceHistory.length - 1)) * chartWidth;
-        const value = metric === 'frameRate' ? point.frameRate : point.latency;
-        const y = chartHeight - (value / maxValue) * chartHeight;
-        return `${x},${y}`;
-      })
-      .join(' ');
+    const width = 400;
+    const height = 200;
+    const maxPoints = 50;
+    
+    const data = this.performanceHistory.slice(-maxPoints);
+    const xStep = width / (data.length - 1);
+    
+    let maxValue = 0;
+    data.forEach(point => {
+      maxValue = Math.max(maxValue, point[metric]);
+    });
+    
+    const points = data.map((point, index) => {
+      const x = index * xStep;
+      const y = height - (point[metric] / maxValue) * height;
+      return `${x},${y}`;
+    });
+    
+    return points.join(' ');
   }
 
   getDebugInfo(): any {
     return {
-      isProcessingActive: this.isProcessingActive,
+      timestamp: new Date().toISOString(),
       metrics: this.metrics,
       settings: this.settings,
-      pipelineCount: this.pipelines.length,
-      historyLength: this.performanceHistory.length,
+      pipelinesStatus: this.pipelines.map(p => ({
+        id: p.id,
+        name: p.name,
+        enabled: p.enabled,
+        lastExecutionTime: p.lastExecutionTime
+      })),
+      isProcessingActive: this.isProcessingActive,
+      performanceHistoryLength: this.performanceHistory.length,
       enabledPipelines: this.pipelines.filter(p => p.enabled).length
     };
+  }
+
+  // Load real-time settings from backend (placeholder)
+  private loadSettings(): void {
+    // TODO: Implement backend API call
+    // this.http.get<AdaptiveSettings>('/api/processing/settings').subscribe(settings => {
+    //   this.settings = settings;
+    // });
+  }
+
+  // Load pipeline configuration from backend (placeholder)
+  private loadPipelineConfig(): void {
+    // TODO: Implement backend API call
+    // this.http.get<ProcessingPipeline[]>('/api/processing/pipelines').subscribe(pipelines => {
+    //   this.pipelines = pipelines;
+    // });
+  }
+
+  // Save current configuration to backend (placeholder)
+  private saveConfiguration(): void {
+    // TODO: Implement backend API call
+    // const config = {
+    //   settings: this.settings,
+    //   pipelines: this.pipelines.map(p => ({ id: p.id, enabled: p.enabled }))
+    // };
+    // this.http.post('/api/processing/save-config', config).subscribe();
   }
 }
