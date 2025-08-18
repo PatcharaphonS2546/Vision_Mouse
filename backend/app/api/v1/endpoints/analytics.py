@@ -4,6 +4,7 @@ Analytics endpoints
 
 import os
 import json
+from datetime import datetime
 from fastapi import HTTPException
 from fastapi import APIRouter, Query
 from ....models.responses import SuccessResponse
@@ -18,6 +19,7 @@ router = APIRouter()
 async def get_analytics_summary():
     """Get analytics summary"""
     return {
+        "success": True,
         "data": {
             "total_sessions": 25,
             "total_duration": 3600.5,
@@ -25,7 +27,8 @@ async def get_analytics_summary():
             "calibration_success_rate": 96.2,
             "last_session": "2025-08-18T09:30:00Z"
         },
-        "message": "Analytics summary retrieved successfully"
+        "message": "Analytics summary retrieved successfully",
+        "timestamp": datetime.now().isoformat()
     }
 
 
@@ -74,7 +77,32 @@ async def get_sessions(
         "size": size
     }
 
-
+@router.get("/dashboard")
+async def get_analytics_dashboard():
+    """Get analytics dashboard data (mock)"""
+    from datetime import datetime
+    # Mock data structure matching frontend expectation
+    return {
+        "success": True,
+        "data": {
+            "sessionDuration": 3600000,
+            "totalGazePoints": 15420,
+            "averageAccuracy": 87.5,
+            "gazeHeatmap": [],
+            "fixationData": [],
+            "saccadeData": [],
+            "performanceHistory": [],
+            "qualityDistribution": {
+                "excellent": 45,
+                "good": 35,
+                "fair": 15,
+                "poor": 5
+            },
+            "usagePatterns": []
+        },
+        "message": "Analytics dashboard data retrieved successfully",
+        "timestamp": datetime.now().isoformat()
+    }
 
 @router.get("/performance")
 async def get_performance_metrics():

@@ -15,20 +15,20 @@ import type {
 
 export const API_CONFIG = {
   // Base URL for Python backend (will be configurable)
-  BASE_URL: 'http://localhost:8000/api',
+  BASE_URL: 'http://localhost:8000/api/v1',
   
   // API Endpoints
   ENDPOINTS: {
     // Calibration endpoints
     CALIBRATION: {
-      START: '/calibration/start',
-      SUBMIT_POINT: '/calibration/point',
-      COMPLETE: '/calibration/complete',
-      VALIDATE: '/calibration/validate',
-      RESET: '/calibration/reset',
-      STATUS: '/calibration/status',
-      SAVE: '/calibration/save',
-      LOAD: '/calibration/load'
+  START: '/calibration/start',
+  SUBMIT_POINT: '/calibration/point',
+  COMPLETE: '/calibration/complete',
+  VALIDATE: '/calibration/validate',
+  RESET: '/calibration/reset',
+  STATUS: '/calibration/',
+  SAVE: '/calibration/save',
+  LOAD: '/calibration/load'
     },
     
     // Tracking endpoints
@@ -79,7 +79,7 @@ export const API_CONFIG = {
   RETRY_DELAY: 1000, // 1 second
   
   // WebSocket Configuration
-  WS_URL: 'ws://localhost:8000/ws',
+  WS_URL: 'ws://localhost:8000/api/v1/ws/connect',
   WS_ENDPOINTS: {
     REAL_TIME_TRACKING: '/tracking',
     LIVE_ANALYTICS: '/analytics',

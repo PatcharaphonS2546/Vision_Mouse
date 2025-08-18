@@ -13,18 +13,23 @@ router = APIRouter()
 
 
 
-@router.get("/", response_model=CalibrationResult)
+@router.get("/")
 async def get_calibration_status():
     """Get current calibration status"""
-    return CalibrationResult(
-        calibration_id="cal_123456",
-        status="ready",
-        accuracy=None,
-        valid=False,
-        points_completed=0,
-        total_points=9,
-        completed_at=None
-    )
+    # Return response matching Angular CalibrationResult interface, wrapped for BaseApiService
+    result = {
+        "accuracy": 95.0,
+        "precision": 0.98,
+        "points": [],
+        "duration": 1200,
+        "success": True,
+        "message": "Calibration ready",
+        "quality": "excellent"
+    }
+    return {
+        "success": True,
+        "data": result
+    }
 
 
 @router.post("/start", response_model=SuccessResponse[dict])

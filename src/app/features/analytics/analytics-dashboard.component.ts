@@ -3,7 +3,7 @@
  * Real-time analytics from Python backend with WebSocket updates
  */
 
-import { Component, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
+import { Component, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewInit, ChangeDetectorRef, ChangeDetectionStrategy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { FormsModule } from '@angular/forms';
@@ -95,6 +95,7 @@ interface MLInsight {
   selector: 'app-analytics-dashboard',
   standalone: true,
   imports: [CommonModule, RouterModule, FormsModule],
+  changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="analytics-dashboard">
       
@@ -1065,16 +1066,15 @@ export class AnalyticsDashboardComponent implements OnInit, OnDestroy, AfterView
   constructor(
     private stateService: StateService,
     private errorHandler: ErrorHandlerService,
-    private notifications: NotificationService
-    // TODO: Add HTTP service for API calls
-    // private mlService: MachineLearningService,
-    // private exportService: DataExportService
+    private notifications: NotificationService,
+    private analyticsApi: AnalyticsApiService,
+    private cdr: ChangeDetectorRef
   ) {}
 
   ngOnInit() {
-    this.initializeAnalytics();
-    this.generateMLInsights();
-    this.subscribeToData();
+  this.fetchAnalyticsData();
+  this.generateMLInsights();
+  this.subscribeToData();
   }
 
   ngAfterViewInit() {
@@ -1087,15 +1087,23 @@ export class AnalyticsDashboardComponent implements OnInit, OnDestroy, AfterView
     this.destroy$.complete();
   }
 
-  private initializeAnalytics() {
-    // Generate sample data
-    this.generateSampleData();
-    
-    // Start periodic updates
-    interval(5000)
-      .pipe(takeUntil(this.destroy$))
-      .subscribe(() => {
-        this.updateRealTimeData();
+  private fetchAnalyticsData() {
+    // ดึงข้อมูลจาก backend ผ่าน AnalyticsApiService
+    this.analyticsApi.getDashboardData()
+      .pipe(takeUntil(this.destroy$), catchError(err => {
+        this.errorHandler.handleError(err);
+        this.notifications.showError('ไม่สามารถโหลดข้อมูล Analytics ได้');
+        return of(null);
+      }))
+      .subscribe((data: any) => {
+        if (data) {
+          // ใช้ setTimeout เพื่อเลื่อนการอัปเดตหลัง change detection รอบแรก
+          setTimeout(() => {
+            this.analyticsData = data;
+            this.renderVisualizations();
+            this.cdr.detectChanges();
+          }, 0);
+        }
       });
   }
 

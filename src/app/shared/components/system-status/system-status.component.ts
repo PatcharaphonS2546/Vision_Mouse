@@ -1,5 +1,5 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { BaseApiService } from '../../../core/api/base-api.service';
 import { Subscription, timer } from 'rxjs';
 
 // Mock interfaces for UI-only component
@@ -65,7 +65,7 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
   showAdvancedMetrics = false;
   showErrorDetails = false;
 
-  constructor(private http: HttpClient) { }
+  constructor(public api: BaseApiService) { }
 
   ngOnInit(): void {
     this.initializeMockData();
@@ -289,10 +289,14 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
 
   // Load system status from backend (placeholder)
   private loadSystemStatus(): void {
-    // TODO: Implement backend API call
-    // this.http.get<SystemStatus>('/api/system/status').subscribe(status => {
-    //   this.systemStatus = status;
-    // });
+    this.api.get<SystemStatus>('system/status').subscribe({
+      next: (status: SystemStatus) => {
+        this.systemStatus = status;
+      },
+      error: (err: any) => {
+        console.error('Error loading system status:', err);
+      }
+    });
   }
 
   // Load performance data from backend (placeholder)

@@ -16,6 +16,8 @@ import {
   ErrorHandlerService,
   NotificationService
 } from '../../core/core.module';
+import { TrackingApiService } from '../../core/api/tracking-api.service';
+import { WebSocketService } from '../../core/api/websocket.service';
 
 import {
   Point2D,
@@ -220,6 +222,8 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
 
   constructor(
     private http: HttpClient,
+    private trackingApi: TrackingApiService,
+    private wsService: WebSocketService,
     private stateService: StateService,
     private cameraService: CameraService,
     private errorHandler: ErrorHandlerService,
@@ -282,24 +286,43 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
       this.notifications.showError('Camera not ready');
       return;
     }
-
     this.isTracking = true;
-    this.trackingStatus = 'tracking';
+    this.trackingStatus = 'initializing';
     this.sessionStartTime = Date.now();
-    
-    // Start simulation
-    this.simulateTracking();
-    
-    this.notifications.showSuccess('Eye tracking started');
-    console.log('Eye tracking started');
+    this.trackingApi.startTracking({
+      sensitivity: this.settings.sensitivity,
+      smoothing: this.settings.smoothing,
+      calibrationEnabled: this.settings.calibrationEnabled,
+      mouseControlEnabled: this.settings.mouseControlEnabled
+    }).subscribe({
+      next: () => {
+        this.trackingStatus = 'tracking';
+        this.notifications.showSuccess('Eye tracking started');
+        this.startTrackingLoop();
+        this.connectWebSocket();
+      },
+      error: err => {
+        this.trackingStatus = 'error';
+        this.isTracking = false;
+        this.notifications.showError('Failed to start tracking: ' + (err?.userMessage || err?.message || 'Unknown error'));
+      }
+    });
   }
 
   stopTracking() {
     this.isTracking = false;
     this.trackingStatus = 'idle';
     this.sessionDuration = (Date.now() - this.sessionStartTime) / 1000;
-    
-    this.notifications.showInfo('Eye tracking stopped');
+    this.trackingApi.stopTracking().subscribe({
+      next: () => {
+        this.notifications.showInfo('Eye tracking stopped');
+      },
+      error: err => {
+        this.notifications.showError('Failed to stop tracking: ' + (err?.userMessage || err?.message || 'Unknown error'));
+      }
+    });
+    this.stopTrackingLoop();
+    this.disconnectWebSocket();
     console.log('Eye tracking stopped');
   }
 
@@ -313,6 +336,49 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
     }, 3000);
     
     console.log('Starting calibration...');
+  }
+
+  // Loop สำหรับดึงข้อมูล gaze และ status จาก backend
+  private trackingLoopSub: any;
+  private startTrackingLoop() {
+    this.trackingLoopSub = interval(100).pipe(
+      takeUntil(this.destroy$)
+    ).subscribe(() => {
+      if (this.isTracking) {
+        this.trackingApi.getCurrentGaze().subscribe({
+          next: gaze => {
+            this.currentGaze = gaze as any;
+            this.drawGazeVisualization();
+          },
+          error: err => {
+            this.trackingStatus = 'error';
+            this.notifications.showError('Failed to get gaze: ' + (err?.userMessage || err?.message || 'Unknown error'));
+          }
+        });
+        this.trackingApi.getTrackingStatus().subscribe({
+          next: status => {
+            // สามารถนำ status ไปแสดงผลหรือปรับ UI ได้
+            // ตัวอย่าง: this.currentFPS = status.fps;
+            if (status?.fps) this.currentFPS = status.fps;
+            if (status?.latency) this.currentLatency = status.latency;
+            if (status?.accuracy) this.currentAccuracy = status.accuracy;
+            if (status?.processingLoad) this.processingLoad = status.processingLoad;
+            if (status?.memoryUsage) this.memoryUsage = status.memoryUsage;
+          },
+          error: err => {
+            this.notifications.showError('Failed to get tracking status: ' + (err?.userMessage || err?.message || 'Unknown error'));
+          }
+        });
+        this.sessionDuration = (Date.now() - this.sessionStartTime) / 1000;
+      }
+    });
+  }
+
+  private stopTrackingLoop() {
+    if (this.trackingLoopSub) {
+      this.trackingLoopSub.unsubscribe();
+      this.trackingLoopSub = null;
+    }
   }
 
   private simulateTracking() {
@@ -441,5 +507,35 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
       'error': 'Error'
     };
     return statusTexts[status] || 'Unknown';
+  }
+
+  private wsSubscription: any;
+  private connectWebSocket() {
+    this.wsSubscription = this.wsService.connect().subscribe({
+      next: msg => {
+        if (msg.type === 'gaze') {
+          this.currentGaze = msg.data;
+          this.drawGazeVisualization();
+        }
+        if (msg.type === 'tracking_status') {
+          const status = msg.data;
+          if (status?.fps) this.currentFPS = status.fps;
+          if (status?.latency) this.currentLatency = status.latency;
+          if (status?.accuracy) this.currentAccuracy = status.accuracy;
+          if (status?.processingLoad) this.processingLoad = status.processingLoad;
+          if (status?.memoryUsage) this.memoryUsage = status.memoryUsage;
+        }
+      },
+      error: err => {
+        this.notifications.showError('WebSocket error: ' + (err?.message || 'Unknown error'));
+      }
+    });
+  }
+
+  private disconnectWebSocket() {
+    if (this.wsSubscription) {
+      this.wsSubscription.unsubscribe();
+      this.wsSubscription = null;
+    }
   }
 }

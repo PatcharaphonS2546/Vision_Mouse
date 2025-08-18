@@ -49,75 +49,34 @@ import { NotificationToastComponent } from '../../shared/shared.module';
 
           <!-- Navigation Menu -->
           <nav class="main-nav">
-            <a routerLink="/welcome" 
-               routerLinkActive="active"
-               class="nav-link">
+            <!-- เมนูหลักที่จำเป็นเท่านั้น -->
+            <a routerLink="/welcome" routerLinkActive="active" class="nav-link">
               <span class="nav-icon">🏠</span>
               <span class="nav-label">หน้าหลัก</span>
             </a>
 
-            <a routerLink="/calibration-new" 
-               routerLinkActive="active"
-               class="nav-link">
+            <a routerLink="/calibration-new" routerLinkActive="active" class="nav-link">
               <span class="nav-icon">🎯</span>
               <span class="nav-label">ปรับเทียบ</span>
             </a>
 
-            <a routerLink="/tracking" 
-               routerLinkActive="active"
-               class="nav-link">
-              <span class="nav-icon">👁️</span>
-              <span class="nav-label">Eye Tracking</span>
-            </a>
-
-            <a routerLink="/performance" 
-               routerLinkActive="active"
-               class="nav-link">
-              <span class="nav-icon">📊</span>
-              <span class="nav-label">Performance</span>
-            </a>
-
-            <a routerLink="/analytics" 
-               routerLinkActive="active"
-               class="nav-link">
-              <span class="nav-icon">🤖</span>
-              <span class="nav-label">Analytics</span>
-            </a>
-
-            <a routerLink="/testing" 
-               routerLinkActive="active"
-               class="nav-link">
-              <span class="nav-icon">🧪</span>
-              <span class="nav-label">Testing</span>
-            </a>
-
-            <a routerLink="/setup" 
-               routerLinkActive="active"
-               class="nav-link"
-               [class.nav-disabled]="!canAccessSetup()">
-              <span class="nav-icon">⚙️</span>
-              <span class="nav-label">ตั้งค่า</span>
-            </a>
-
-            <a routerLink="/workspace/tracking" 
-               routerLinkActive="active"
-               class="nav-link"
-               [class.nav-disabled]="!canAccessWorkspace()">
+            <a routerLink="/tracking" routerLinkActive="active" class="nav-link">
               <span class="nav-icon">👁️</span>
               <span class="nav-label">ติดตามสายตา</span>
             </a>
 
-            <a routerLink="/workspace/analytics" 
-               routerLinkActive="active"
-               class="nav-link"
-               [class.nav-disabled]="!canAccessWorkspace()">
+            <!-- รวม Performance กับ Analytics เป็นเมนูเดียว -->
+            <a routerLink="/analytics" routerLinkActive="active" class="nav-link">
               <span class="nav-icon">📊</span>
-              <span class="nav-label">สถิติ</span>
+              <span class="nav-label">สถิติและประสิทธิภาพ</span>
             </a>
 
-            <a routerLink="/help" 
-               routerLinkActive="active"
-               class="nav-link">
+            <a routerLink="/setup" routerLinkActive="active" class="nav-link" [class.nav-disabled]="!canAccessSetup()">
+              <span class="nav-icon">⚙️</span>
+              <span class="nav-label">ตั้งค่า</span>
+            </a>
+
+            <a routerLink="/help" routerLinkActive="active" class="nav-link">
               <span class="nav-icon">❓</span>
               <span class="nav-label">ช่วยเหลือ</span>
             </a>
@@ -139,13 +98,6 @@ import { NotificationToastComponent } from '../../shared/shared.module';
               (click)="toggleTracking()"
               [title]="isTrackingActive ? 'หยุดติดตาม' : 'เริ่มติดตาม'">
               {{ isTrackingActive ? '⏸️' : '▶️' }}
-            </button>
-
-            <button 
-              class="quick-action-btn"
-              (click)="openSettings()"
-              title="การตั้งค่า">
-              ⚙️
             </button>
           </div>
         </div>

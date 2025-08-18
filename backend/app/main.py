@@ -29,7 +29,16 @@ app = FastAPI(
     redoc_url=f"{settings.API_PREFIX}/redoc"
 )
 
-# Setup middleware
+
+# Setup CORS middleware for Angular frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:4200"],  # Angular dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 setup_middleware(app)
 
 # Add exception handlers
