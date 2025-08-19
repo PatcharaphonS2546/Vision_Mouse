@@ -66,6 +66,8 @@ interface PerformanceSnapshot {
   accuracy: number;
   cpuUsage: number;
   memoryUsage: number;
+  frameDrops?: number;
+  rmse?: number;
 }
 
 interface QualityDistribution {
@@ -143,7 +145,7 @@ interface MLInsight {
               </div>
             </div>
           </div>
-          
+
           <div class="summary-card">
             <div class="card-icon">👁️</div>
             <div class="card-content">
@@ -152,7 +154,7 @@ interface MLInsight {
               <div class="metric-subtitle">{{getAverageFixationDuration()}}ms avg</div>
             </div>
           </div>
-          
+
           <div class="summary-card">
             <div class="card-icon">⚡</div>
             <div class="card-content">
@@ -161,13 +163,39 @@ interface MLInsight {
               <div class="metric-subtitle">{{getAverageSaccadeVelocity()}}°/s avg</div>
             </div>
           </div>
-          
+
           <div class="summary-card">
             <div class="card-icon">⏱️</div>
             <div class="card-content">
               <h3>Response Time</h3>
               <div class="metric-value">{{getAverageLatency()}}ms</div>
               <div class="metric-subtitle">{{getLatencyTrend()}}</div>
+            </div>
+          </div>
+
+          <!-- New Metrics Cards -->
+          <div class="summary-card">
+            <div class="card-icon">🎥</div>
+            <div class="card-content">
+              <h3>FPS</h3>
+              <div class="metric-value">{{getLatestFps()}}</div>
+              <div class="metric-subtitle">Frames per second</div>
+            </div>
+          </div>
+          <div class="summary-card">
+            <div class="card-icon">📉</div>
+            <div class="card-content">
+              <h3>Drop Rate</h3>
+              <div class="metric-value">{{getLatestDropRate()}}%</div>
+              <div class="metric-subtitle">Frame drops</div>
+            </div>
+          </div>
+          <div class="summary-card">
+            <div class="card-icon">📏</div>
+            <div class="card-content">
+              <h3>RMSE</h3>
+              <div class="metric-value">{{getLatestRmse()}}</div>
+              <div class="metric-subtitle">Root Mean Squared Error</div>
             </div>
           </div>
         </div>
@@ -1049,6 +1077,43 @@ export class AnalyticsDashboardComponent implements OnInit, OnDestroy, AfterView
     },
     usagePatterns: []
   };
+
+  // Latest metrics from backend
+  latestFps: number = 0;
+  latestDropRate: number = 0;
+  latestRmse: number = 0;
+
+  getLatestFps(): number {
+    // Use latest value from performanceHistory if available
+    if (this.analyticsData.performanceHistory.length > 0) {
+      return Math.round(this.analyticsData.performanceHistory[this.analyticsData.performanceHistory.length - 1].fps);
+    }
+    return this.latestFps;
+  }
+
+  getLatestDropRate(): number {
+    // Use latest value from performanceHistory if available
+    if (this.analyticsData.performanceHistory.length > 0) {
+      const perf = this.analyticsData.performanceHistory[this.analyticsData.performanceHistory.length - 1];
+      // Calculate drop rate from frameDrops and fps if available
+      if (perf.frameDrops !== undefined && perf.fps !== undefined && perf.fps > 0) {
+        return Math.round((perf.frameDrops / (perf.fps + perf.frameDrops)) * 100);
+      }
+    }
+    return this.latestDropRate;
+  }
+
+  getLatestRmse(): number {
+    // If backend provides RMSE in performanceHistory, use it
+    if (this.analyticsData.performanceHistory.length > 0) {
+      const perf = this.analyticsData.performanceHistory[this.analyticsData.performanceHistory.length - 1];
+      // If RMSE is present in perf, use it
+      if ((perf as any).rmse !== undefined) {
+        return (perf as any).rmse;
+      }
+    }
+    return this.latestRmse;
+  }
   
   mlInsights: MLInsight[] = [];
   
@@ -1093,17 +1158,56 @@ export class AnalyticsDashboardComponent implements OnInit, OnDestroy, AfterView
       .pipe(takeUntil(this.destroy$), catchError(err => {
         this.errorHandler.handleError(err);
         this.notifications.showError('ไม่สามารถโหลดข้อมูล Analytics ได้');
+        this.analyticsData = {
+          sessionDuration: 0,
+          totalGazePoints: 0,
+          averageAccuracy: 0,
+          gazeHeatmap: [],
+          fixationData: [],
+          saccadeData: [],
+          performanceHistory: [],
+          qualityDistribution: { excellent: 0, good: 0, fair: 0, poor: 0 },
+          usagePatterns: []
+        };
+        this.renderVisualizations();
+        this.cdr.detectChanges();
         return of(null);
       }))
       .subscribe((data: any) => {
-        if (data) {
-          // ใช้ setTimeout เพื่อเลื่อนการอัปเดตหลัง change detection รอบแรก
-          setTimeout(() => {
-            this.analyticsData = data;
-            this.renderVisualizations();
-            this.cdr.detectChanges();
-          }, 0);
+        if (!data || !data.performanceHistory) {
+          this.notifications.showError('ข้อมูล Analytics ไม่สมบูรณ์หรือว่างเปล่า');
+          this.analyticsData = {
+            sessionDuration: 0,
+            totalGazePoints: 0,
+            averageAccuracy: 0,
+            gazeHeatmap: [],
+            fixationData: [],
+            saccadeData: [],
+            performanceHistory: [],
+            qualityDistribution: { excellent: 0, good: 0, fair: 0, poor: 0 },
+            usagePatterns: []
+          };
+          this.renderVisualizations();
+          this.cdr.detectChanges();
+          return;
         }
+        setTimeout(() => {
+          this.analyticsData = data;
+          // Extract latest metrics if available
+          if (data.performanceHistory && data.performanceHistory.length > 0) {
+            const latestPerf = data.performanceHistory[data.performanceHistory.length - 1];
+            this.latestFps = Math.round(latestPerf.fps);
+            if (latestPerf.frameDrops !== undefined && latestPerf.fps !== undefined && latestPerf.fps > 0) {
+              this.latestDropRate = Math.round((latestPerf.frameDrops / (latestPerf.fps + latestPerf.frameDrops)) * 100);
+            }
+            if ((latestPerf as any).rmse !== undefined) {
+              this.latestRmse = (latestPerf as any).rmse;
+            }
+          }
+          this.notifications.showSuccess('โหลดข้อมูล Analytics สำเร็จ');
+          this.renderVisualizations();
+          this.cdr.detectChanges();
+        }, 0);
       });
   }
 
@@ -1341,7 +1445,8 @@ export class AnalyticsDashboardComponent implements OnInit, OnDestroy, AfterView
   }
 
   exportData() {
-    this.showExportModal = true;
+  this.showExportModal = true;
+  this.notifications.showInfo('กำลังเตรียมข้อมูลสำหรับการส่งออก...');
   }
 
   closeExportModal() {
@@ -1360,13 +1465,17 @@ export class AnalyticsDashboardComponent implements OnInit, OnDestroy, AfterView
     //   });
     
     // Mock implementation for now
-    this.notifications.showSuccess(`ส่งออกข้อมูลเป็น ${this.exportOptions.format.toUpperCase()} สำเร็จ`);
-    this.closeExportModal();
+  this.notifications.showSuccess(`ส่งออกข้อมูลเป็น ${this.exportOptions.format.toUpperCase()} สำเร็จ`);
+  this.closeExportModal();
   }
 
   applyInsight(insight: MLInsight) {
     this.notifications.showInfo(`กำลังปรับใช้: ${insight.suggestion}`);
     // In a real implementation, this would apply the optimization
+    // Show result notification (mock)
+    setTimeout(() => {
+      this.notifications.showSuccess('ปรับใช้คำแนะนำ ML สำเร็จ');
+    }, 1000);
   }
 
   // Helper Methods

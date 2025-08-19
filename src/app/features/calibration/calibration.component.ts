@@ -47,19 +47,21 @@ import { Point2D, QualityLevel } from '../../core/interfaces/core.interface';
       <div *ngIf="liveCalibrationData" class="live-data-section">
         <h3>ข้อมูลจาก Backend (Real-time)</h3>
         <div class="live-data-grid">
-          <div class="data-item" *ngIf="liveCalibrationData.gazePoint">
-            <label>Gaze Point:</label>
-            <span>X: {{liveCalibrationData.gazePoint.x | number:'1.1-2'}}, Y: {{liveCalibrationData.gazePoint.y | number:'1.1-2'}}</span>
+          <div class="data-item" *ngIf="liveCalibrationData.gaze_x !== undefined && liveCalibrationData.gaze_y !== undefined">
+            <label>Gaze Position:</label>
+            <span>X: {{liveCalibrationData.gaze_x | number:'1.2-2'}}, Y: {{liveCalibrationData.gaze_y | number:'1.2-2'}}</span>
           </div>
-          <div class="data-item" *ngIf="liveCalibrationData.confidence">
-            <label>Confidence:</label>
-            <span>{{(liveCalibrationData.confidence * 100) | number:'1.1-1'}}%</span>
+          <div class="data-item" *ngIf="liveCalibrationData.quality !== undefined">
+            <label>Quality:</label>
+            <span>{{liveCalibrationData.quality | number:'1.2-2'}}</span>
           </div>
-          <div class="data-item" *ngIf="liveCalibrationData.eyeDetected !== undefined">
-            <label>Eye Detection:</label>
-            <span class="status-badge" [ngClass]="liveCalibrationData.eyeDetected ? 'success' : 'warning'">
-              {{liveCalibrationData.eyeDetected ? 'ตรวจพบดวงตา' : 'ไม่พบดวงตา'}}
-            </span>
+          <div class="data-item" *ngIf="liveCalibrationData.timing_ms">
+            <label>Timing (ms):</label>
+            <span>{{liveCalibrationData.timing_ms.total | number:'1.0-0'}} ms</span>
+          </div>
+          <div class="data-item" *ngIf="liveCalibrationData.debug">
+            <label>Debug:</label>
+            <span>{{ liveCalibrationData.debug | json }}</span>
           </div>
         </div>
       </div>
