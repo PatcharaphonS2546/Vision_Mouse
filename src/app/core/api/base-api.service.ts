@@ -24,8 +24,14 @@ export class BaseApiService {
   get<T>(endpoint: string, params?: any): Observable<T> {
     const url = this.buildUrl(endpoint);
     const httpParams = this.buildParams(params);
-    
-    return this.http.get<ApiResponse<T>>(url, { 
+
+    // Prevent GET to gaze prediction endpoint
+    if (endpoint === '/gaze/predict' || endpoint === API_CONFIG.ENDPOINTS.TRACKING.GAZE) {
+      console.warn('GET /gaze/predict is not allowed. Use POST instead.');
+      throw new Error('GET /gaze/predict is not allowed. Use POST instead.');
+    }
+
+    return this.http.get<ApiResponse<T>>(url, {
       params: httpParams,
       headers: this.getHeaders()
     }).pipe(
@@ -41,9 +47,15 @@ export class BaseApiService {
    */
   post<T>(endpoint: string, body?: any): Observable<T> {
     const url = this.buildUrl(endpoint);
-    
+    let headers: HttpHeaders;
+    // ถ้า body เป็น FormData ไม่ต้องตั้ง Content-Type
+    if (body instanceof FormData) {
+      headers = new HttpHeaders({ 'Accept': 'application/json' });
+    } else {
+      headers = this.getHeaders();
+    }
     return this.http.post<ApiResponse<T>>(url, body, {
-      headers: this.getHeaders()
+      headers
     }).pipe(
       timeout(API_CONFIG.TIMEOUT),
       retry(API_CONFIG.RETRY_ATTEMPTS),
@@ -170,10 +182,25 @@ export class BaseApiService {
   }
 
   private handleResponse<T>(response: ApiResponse<T>): T {
-    if (response.success && response.data !== undefined) {
+    // รองรับ response ที่ไม่มี success
+    if ('success' in response && response.success && response.data !== undefined) {
+      return response.data;
+    } else if ('data' in response && response.data !== undefined) {
       return response.data;
     } else {
-      throw new Error(response.error || response.message || 'Unknown API error');
+      // ถ้า response เป็น object ที่ไม่มี data ให้คืนทั้งก้อน
+      if (typeof response === 'object') {
+        return response as T;
+      }
+      let errMsg = 'Unknown API error';
+      if (typeof response === 'object' && response !== null) {
+        if ('error' in response && typeof (response as any).error === 'string') {
+          errMsg = (response as any).error;
+        } else if ('message' in response && typeof (response as any).message === 'string') {
+          errMsg = (response as any).message;
+        }
+      }
+      throw new Error(errMsg);
     }
   }
 
@@ -189,8 +216,12 @@ export class BaseApiService {
       };
     } else {
       // Server-side error
+      let code = 'HTTP_UNKNOWN';
+      if (typeof error.status === 'number' && error.status > 0) {
+        code = `HTTP_${error.status}`;
+      }
       apiError = {
-        code: `HTTP_${error.status}`,
+        code,
         message: error.error?.message || error.message || 'Server error occurred',
         details: error.error,
         timestamp: new Date().toISOString()

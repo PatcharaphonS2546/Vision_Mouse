@@ -36,7 +36,7 @@ export const API_CONFIG = {
       START: '/tracking/start',
       STOP: '/tracking/stop',
       PROCESS: '/tracking/process',
-      GAZE: '/tracking/gaze',
+      GAZE: '/gaze/predict',
       EYES: '/tracking/eyes',
       STATUS: '/tracking/status',
       CONFIG: '/tracking/config',

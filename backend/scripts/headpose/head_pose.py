@@ -13,7 +13,8 @@ def solve_head_pose(landmarks, image_shape, camera_matrix=None):
         [-150.0, -150.0, -125.0], # Left Mouth corner
         [150.0, -150.0, -125.0]   # Right mouth corner
     ])
-    # ดึงจุด 2D จาก landmarks
+    # กำหนด w, h ก่อนนำไปใช้กับ landmarks
+    h, w = image_shape[:2]
     image_points = np.array([
         [landmarks.landmark[1].x * w, landmarks.landmark[1].y * h],   # Nose tip
         [landmarks.landmark[152].x * w, landmarks.landmark[152].y * h], # Chin
@@ -22,7 +23,6 @@ def solve_head_pose(landmarks, image_shape, camera_matrix=None):
         [landmarks.landmark[287].x * w, landmarks.landmark[287].y * h], # Left mouth corner
         [landmarks.landmark[57].x * w, landmarks.landmark[57].y * h]    # Right mouth corner
     ])
-    h, w = image_shape[:2]
     if camera_matrix is None:
         focal_length = w
         center = (w / 2, h / 2)

@@ -48,15 +48,26 @@ async def gaze_predict(file: UploadFile = File(...)):
     end2end_model = None
     result = process_frame(latest[0], latest[1], calibration_model, stabilizer, drift_corrector, analytics_reporter, end2end_model)
     # Ensure schema keys for frontend compatibility
-    output = {
-        'ts': result.get('ts'),
-        'gaze_x': result.get('gaze_x'),
-        'gaze_y': result.get('gaze_y'),
-        'quality': result.get('quality'),
-        'timing_ms': result.get('timing_ms'),
-        'debug': result.get('debug'),
-        'analytics': result.get('analytics')
-    }
+    if result is not None:
+        output = {
+            'ts': result.get('ts'),
+            'gaze_x': result.get('gaze_x'),
+            'gaze_y': result.get('gaze_y'),
+            'quality': result.get('quality'),
+            'timing_ms': result.get('timing_ms'),
+            'debug': result.get('debug'),
+            'analytics': result.get('analytics')
+        }
+    else:
+        output = {
+            'ts': None,
+            'gaze_x': None,
+            'gaze_y': None,
+            'quality': None,
+            'timing_ms': None,
+            'debug': 'No result',
+            'analytics': None
+        }
     return JSONResponse(content=output)
 
 # Phase 2: WebSocket สำหรับ stream real-time และ queue/backpressure

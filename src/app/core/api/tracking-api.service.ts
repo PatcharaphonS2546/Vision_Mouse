@@ -47,9 +47,29 @@ export class TrackingApiService {
   /**
    * Get current gaze point
    */
-  getCurrentGaze(): Observable<GazePoint> {
-    return this.baseApi.get<GazePoint>(
-      API_CONFIG.ENDPOINTS.TRACKING.GAZE
+  getCurrentGaze(frameData?: any): Observable<GazePoint> {
+    // ต้องใช้ POST สำหรับ /gaze/predict และต้องส่ง field 'file' เป็น FormData
+    const formData = new FormData();
+    // รองรับทั้งกรณี frameData เป็น Blob/File หรือ base64 string
+    if (frameData instanceof Blob || frameData instanceof File) {
+      formData.append('file', frameData);
+    } else if (typeof frameData === 'string') {
+      // ถ้าเป็น base64 string ให้แปลงเป็น Blob ก่อน
+      const byteString = atob(frameData.split(',')[1] || frameData);
+      const mimeString = frameData.split(',')[0]?.split(':')[1]?.split(';')[0] || 'image/jpeg';
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i);
+      }
+      const blob = new Blob([ab], { type: mimeString });
+      formData.append('file', blob);
+    } else {
+      throw new Error('frameData must be a File, Blob, or base64 string');
+    }
+    return this.baseApi.post<GazePoint>(
+      API_CONFIG.ENDPOINTS.TRACKING.GAZE,
+      formData
     );
   }
 

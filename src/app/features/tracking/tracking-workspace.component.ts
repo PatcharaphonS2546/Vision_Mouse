@@ -8,16 +8,12 @@ import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
-import { Subject, takeUntil, interval, BehaviorSubject } from 'rxjs';
-
-import { 
-  StateService, 
-  CameraService,
-  ErrorHandlerService,
-  NotificationService
-} from '../../core/core.module';
+import { Subject, takeUntil, interval, BehaviorSubject } from 'rxjs'; 
+import { StateService, CameraService, ErrorHandlerService, NotificationService } from '../../core/core.module';
+import { WebcamService } from '../../core/services/webcam.service';
 import { TrackingApiService } from '../../core/api/tracking-api.service';
 import { WebSocketService } from '../../core/api/websocket.service';
+import { CalibrationApiService } from '../../core/api/calibration-api.service';
 
 import {
   Point2D,
@@ -44,6 +40,14 @@ type CameraStatusType = 'disconnected' | 'initializing' | 'ready' | 'error';
 @Component({
   standalone: true,
   imports: [CommonModule, RouterModule, FormsModule],
+  providers: [
+    StateService,
+    CameraService,
+    ErrorHandlerService,
+    NotificationService,
+    WebcamService,
+    CalibrationApiService
+  ],
   selector: 'app-tracking-workspace',
   template: `
     <div class="tracking-workspace">
@@ -66,11 +70,11 @@ type CameraStatusType = 'disconnected' | 'initializing' | 'ready' | 'error';
             </div>
             
             <!-- Gaze visualization -->
-            <div *ngIf="currentGaze && showGazePoint" 
-                 class="gaze-point"
-                 [style.left.px]="currentGaze.position.x"
-                 [style.top.px]="currentGaze.position.y">
-            </div>
+      <div *ngIf="currentGaze?.position && showGazePoint" 
+        class="gaze-point"
+        [style.left.px]="currentGaze?.position?.x ?? 0"
+        [style.top.px]="currentGaze?.position?.y ?? 0">
+      </div>
           </div>
         </div>
       </div>
@@ -228,7 +232,9 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
     private cameraService: CameraService,
     private errorHandler: ErrorHandlerService,
     private notifications: NotificationService,
-    private cdr: ChangeDetectorRef
+    private cdr: ChangeDetectorRef,
+    private webcamService: WebcamService,
+    private calibrationApi: CalibrationApiService
   ) {}
 
   ngOnInit() {
@@ -252,12 +258,25 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
   }
 
   private initializeCamera() {
-    // Mock camera initialization
-    setTimeout(() => {
-      this.cameraReady = true;
-      this.cameraStatus = 'ready';
-      this.cdr.detectChanges();
-    }, 2000);
+    // Start webcam จริง
+    const video = this.videoElement?.nativeElement;
+    if (video) {
+      this.webcamService.startWebcam(video)
+        .then(() => {
+          this.cameraReady = true;
+          this.cameraStatus = 'ready';
+          this.cdr.detectChanges();
+        })
+        .catch((err: any) => {
+          this.cameraReady = false;
+          this.cameraStatus = 'error';
+          this.notifications.showError('Webcam error: ' + (err?.message || err));
+        });
+    } else {
+      this.cameraReady = false;
+      this.cameraStatus = 'error';
+      this.notifications.showError('Video element not found');
+    }
   }
 
   private initializeCanvas() {
@@ -328,13 +347,21 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
 
   calibrate() {
     this.trackingStatus = 'calibrating';
-    
-    // Mock calibration process
-    setTimeout(() => {
-      this.trackingStatus = 'idle';
-      this.notifications.showSuccess('Calibration completed');
-    }, 3000);
-    
+    this.calibrationApi.startCalibration({
+      sensitivity: this.settings.sensitivity,
+      smoothing: this.settings.smoothing,
+      calibrationEnabled: true
+    }).subscribe({
+      next: (result) => {
+        this.trackingStatus = 'idle';
+        this.notifications.showSuccess('Calibration completed');
+        // สามารถอัปเดต state หรือเก็บผล calibration result ได้ที่นี่
+      },
+      error: err => {
+        this.trackingStatus = 'error';
+        this.notifications.showError('Calibration failed: ' + (err?.userMessage || err?.message || 'Unknown error'));
+      }
+    });
     console.log('Starting calibration...');
   }
 
@@ -343,18 +370,47 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
   private startTrackingLoop() {
     this.trackingLoopSub = interval(100).pipe(
       takeUntil(this.destroy$)
-    ).subscribe(() => {
+    ).subscribe(async () => {
       if (this.isTracking) {
-        this.trackingApi.getCurrentGaze().subscribe({
-          next: gaze => {
-            this.currentGaze = gaze as any;
-            this.drawGazeVisualization();
-          },
-          error: err => {
-            this.trackingStatus = 'error';
-            this.notifications.showError('Failed to get gaze: ' + (err?.userMessage || err?.message || 'Unknown error'));
+        // Capture frame from video element
+        let frameBlob: Blob | null = null;
+        try {
+          const video = this.videoElement?.nativeElement;
+          if (video && video.readyState >= 2) {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(video, 0, 0);
+              frameBlob = await new Promise<Blob | null>((resolve) => {
+                canvas.toBlob((blob) => resolve(blob), 'image/jpeg');
+              });
+            }
           }
-        });
+        } catch (err) {
+          let msg = '';
+          if (err && typeof err === 'object' && 'message' in err) {
+            msg = (err as any).message;
+          } else {
+            msg = String(err);
+          }
+          this.notifications.showError('Failed to capture frame: ' + msg);
+        }
+        if (frameBlob) {
+          this.trackingApi.getCurrentGaze(frameBlob).subscribe({
+            next: gaze => {
+              this.currentGaze = gaze as any;
+              this.drawGazeVisualization();
+            },
+            error: err => {
+              this.trackingStatus = 'error';
+              this.notifications.showError('Failed to get gaze: ' + (err?.userMessage || err?.message || 'Unknown error'));
+            }
+          });
+        } else {
+          this.notifications.showError('Cannot capture frame from camera. Please check camera connection and permissions.');
+        }
         this.trackingApi.getTrackingStatus().subscribe({
           next: status => {
             // สามารถนำ status ไปแสดงผลหรือปรับ UI ได้
@@ -452,7 +508,7 @@ export class TrackingWorkspaceComponent implements OnInit, OnDestroy, AfterViewI
     }
 
     // Draw current gaze point
-    if (this.currentGaze) {
+    if (this.currentGaze && this.currentGaze.position) {
       ctx.fillStyle = '#ff0000';
       ctx.beginPath();
       ctx.arc(this.currentGaze.position.x, this.currentGaze.position.y, 8, 0, 2 * Math.PI);

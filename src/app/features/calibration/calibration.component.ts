@@ -4,6 +4,7 @@
  */
 
 import { Component, OnInit, OnDestroy } from '@angular/core';
+import { ViewChild, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { FormsModule } from '@angular/forms';
@@ -414,6 +415,7 @@ import { Point2D, QualityLevel } from '../../core/interfaces/core.interface';
   `]
 })
 export class CalibrationComponent implements OnInit, OnDestroy {
+  @ViewChild('videoElement', { static: true }) videoElementRef!: ElementRef<HTMLVideoElement>;
   private destroy$ = new Subject<void>();
   
   // UI State
@@ -515,16 +517,31 @@ export class CalibrationComponent implements OnInit, OnDestroy {
     this.cameraService.getState().subscribe(state => {
       this.cameraReady = state.isStreaming && state.hasPermission;
       this.canStartCalibration = this.cameraReady && this.calibrationStatus === CalibrationStatus.IDLE;
+
+      // เชื่อม stream กับ video element
+      if (this.cameraReady && state.stream && this.videoElementRef) {
+        const videoEl = this.videoElementRef.nativeElement;
+        if (videoEl.srcObject !== state.stream) {
+          videoEl.srcObject = state.stream;
+        }
+      }
     });
 
     const currentState = this.cameraService.getCurrentState();
-    
+
     if (!currentState.isStreaming) {
       try {
         await this.cameraService.initialize();
-        await this.cameraService.startStream();
+        const stream = await this.cameraService.startStream();
+        // เชื่อม stream กับ video element หลัง start
+        if (this.videoElementRef && stream) {
+          const videoEl = this.videoElementRef.nativeElement;
+          videoEl.srcObject = stream;
+        }
       } catch (error) {
         this.notifications.showError('ไม่สามารถเข้าถึงกล้องได้ กรุณาตรวจสอบการอนุญาต');
+        this.cameraReady = false;
+        this.canStartCalibration = false;
         throw error;
       }
     }
@@ -534,15 +551,21 @@ export class CalibrationComponent implements OnInit, OnDestroy {
     try {
       this.calibrationStatus = CalibrationStatus.INITIALIZING;
       this.notifications.showInfo('เริ่มการปรับจูนระบบ');
-      
+
+      if (!this.cameraReady) {
+        this.notifications.showError('กล้องไม่พร้อม กรุณาตรวจสอบการเชื่อมต่อกล้อง');
+        this.calibrationStatus = CalibrationStatus.FAILED;
+        return;
+      }
+
       if (this.backendConnected) {
         // Call backend API
         const config = {
           pointCount: 9,
           duration: 2000,
-          screenResolution: { 
-            width: window.screen.width, 
-            height: window.screen.height 
+          screenResolution: {
+            width: window.screen.width,
+            height: window.screen.height
           }
         };
 
@@ -550,6 +573,7 @@ export class CalibrationComponent implements OnInit, OnDestroy {
           .pipe(
             takeUntil(this.destroy$),
             catchError(error => {
+              this.notifications.showError('API call failed, ใช้ mock data');
               console.error('API call failed, using mock data:', error);
               return of(null);
             })
@@ -560,7 +584,7 @@ export class CalibrationComponent implements OnInit, OnDestroy {
           console.log('Calibration started on backend:', response);
         }
       }
-      
+
       // Initialize progress
       this.currentProgress = {
         currentStep: 1,
@@ -573,13 +597,14 @@ export class CalibrationComponent implements OnInit, OnDestroy {
         currentPoint: 1,
         collectedSamples: 0
       };
-      
+
       this.calibrationStatus = CalibrationStatus.COLLECTING;
-      
+
       // Start calibration process
       this.simulateCalibrationProcess();
-      
+
     } catch (error) {
+      this.notifications.showError('เกิดข้อผิดพลาดขณะเริ่ม calibration');
       this.errorHandler.handleError(error as Error, 'Failed to start calibration');
       this.calibrationStatus = CalibrationStatus.FAILED;
     }
